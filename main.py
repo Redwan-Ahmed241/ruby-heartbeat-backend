@@ -2,14 +2,24 @@
 
 Configured for local execution and serverless ASGI deployment on Vercel.
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import Base, engine
+import app.models  # Ensure all SQLAlchemy models are imported
 from app.api.v1 import api_router
 
-# Ensure tables are registered
-Base.metadata.create_all(bind=engine)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize DB tables gracefully on startup if not present
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as exc:
+        print(f"Database table sync warning: {exc}")
+    yield
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -17,6 +27,7 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS Middleware supporting wildcard Vercel deployment domains and localhost

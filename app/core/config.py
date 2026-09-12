@@ -1,5 +1,6 @@
-"""Application configuration settings."""
+'''Application configuration settings.'''
 from typing import List
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
 
     # CORS Settings
     CORS_ORIGINS: List[str] = [
@@ -36,6 +38,20 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @field_validator("DATABASE_URL", mode="after")
+    @classmethod
+    def assemble_db_url(cls, v: str) -> str:
+        if not v:
+            return v
+        if v.startswith("postgres://"):
+            v = "postgresql+psycopg2://" + v[11:]
+        elif v.startswith("postgresql://"):
+            v = "postgresql+psycopg2://" + v[13:]
+        if "pooler.supabase.com" in v and "sslmode" not in v:
+            sep = "&" if "?" in v else "?"
+            v = f"{v}{sep}sslmode=require"
+        return v
 
 
 settings = Settings()
