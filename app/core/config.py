@@ -25,13 +25,14 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:5173",
         "http://localhost:8080",
+        "http://localhost:8081",
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:8081",
         "https://ruby-heartbeat-backend.vercel.app",
         "https://rubyheartbeat.vercel.app",
         "https://roktodeojibonbachao.vercel.app",
-        "http://127.0.0.1:8080",
-
     ]
     CORS_ALLOW_ORIGIN_REGEX: str = r"https://.*\.vercel\.app"
 

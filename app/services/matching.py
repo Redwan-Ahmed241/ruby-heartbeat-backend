@@ -25,7 +25,9 @@ Implements:
 import math
 import logging
 from datetime import date
-from typing import List, Tuple
+from typing import Dict, List, Tuple
+from uuid import UUID
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session, joinedload
 from app.models.user import Donor, DonationHistory
 from app.models.request import BloodRequest, DonorMatch
@@ -77,23 +79,35 @@ def calculate_recency_score(donor: Donor, component: ComponentType, today: date)
     return score
 
 
-def calculate_reliability_score(db: Session, donor: Donor) -> float:
-    """Calculate donor reliability: completed / max(total_matches, 1)."""
-    total_matches = (
-        db.query(DonorMatch).filter(DonorMatch.donor_id == donor.donor_id).count()
-    )
-    if total_matches == 0:
-        return 0.8  # Default encouraging score for fresh donors
+DEFAULT_RELIABILITY = 0.8  # Encouraging score for donors with no prior matches
 
-    accepted_matches = (
-        db.query(DonorMatch)
-        .filter(
-            DonorMatch.donor_id == donor.donor_id,
-            DonorMatch.response_status == MatchResponseStatus.ACCEPTED,
+
+def calculate_reliability_scores(db: Session, donor_ids: List[UUID]) -> Dict[UUID, float]:
+    """Reliability = accepted / total matches, computed for many donors in ONE query.
+
+    Avoids the N+1 pattern of querying counts per candidate. Donors with no prior
+    matches fall back to DEFAULT_RELIABILITY.
+    """
+    if not donor_ids:
+        return {}
+
+    rows = (
+        db.query(
+            DonorMatch.donor_id,
+            func.count(DonorMatch.match_id).label("total"),
+            func.sum(
+                case((DonorMatch.response_status == MatchResponseStatus.ACCEPTED, 1), else_=0)
+            ).label("accepted"),
         )
-        .count()
+        .filter(DonorMatch.donor_id.in_(donor_ids))
+        .group_by(DonorMatch.donor_id)
+        .all()
     )
-    return accepted_matches / float(total_matches)
+
+    scores: Dict[UUID, float] = {}
+    for donor_id, total, accepted in rows:
+        scores[donor_id] = (accepted or 0) / float(total) if total else DEFAULT_RELIABILITY
+    return scores
 
 
 def run_matching_engine(
@@ -109,57 +123,66 @@ def run_matching_engine(
     # 1. Compatibility list
     compatible_groups = get_compatible_donor_groups(request.blood_group)
 
-    # 2. Query available donors with compatible blood groups
+    # 2. Query available compatible donors, pre-filtered to a bounding box around
+    #    the request so the DB does the coarse spatial cut before we run haversine.
+    #    Max search radius is 50 km; 1 deg latitude ~= 111 km.
+    max_radius_km = 50.0
+    lat_delta = max_radius_km / 111.0
+    cos_lat = math.cos(math.radians(req_lat))
+    lon_delta = max_radius_km / (111.0 * max(abs(cos_lat), 1e-6))
+
     donors_query = (
         db.query(Donor)
         .options(joinedload(Donor.medical_info), joinedload(Donor.user))
         .filter(
             Donor.blood_group.in_(compatible_groups),
             Donor.availability_status == AvailabilityStatus.AVAILABLE,
+            Donor.latitude.between(req_lat - lat_delta, req_lat + lat_delta),
+            Donor.longitude.between(req_lon - lon_delta, req_lon + lon_delta),
         )
         .all()
     )
 
-    # 3. Filter eligible donors
-    eligible_candidates: List[Donor] = []
+    # 3. Filter eligible donors and compute each donor's distance exactly once.
+    eligible_with_distance: List[Tuple[Donor, float]] = []
     for donor in donors_query:
         eligible, _, _ = check_donor_eligibility(
             donor, target_component=request.component_type, today=today
         )
-        if eligible:
-            eligible_candidates.append(donor)
+        if not eligible:
+            continue
+        dist = haversine_distance(req_lat, req_lon, float(donor.latitude), float(donor.longitude))
+        if dist <= max_radius_km:
+            eligible_with_distance.append((donor, dist))
 
-    # 4. Spatial Radius Expansion
-    # Emergency bypasses progressive expansion and searches 50 km immediately
+    # Sort once by distance so progressive radius expansion is a simple prefix scan.
+    eligible_with_distance.sort(key=lambda x: x[1])
+
+    # 4. Progressive radius expansion (reuses precomputed distances, no re-haversine).
+    #    Emergency searches the full 50 km immediately.
     radii = [50.0] if is_emergency else [10.0, 25.0, 50.0]
-    
     candidate_distances: List[Tuple[Donor, float]] = []
-    
     for radius in radii:
-        current_in_radius: List[Tuple[Donor, float]] = []
-        for donor in eligible_candidates:
-            d_lat = float(donor.latitude)
-            d_lon = float(donor.longitude)
-            dist = haversine_distance(req_lat, req_lon, d_lat, d_lon)
-            if dist <= radius:
-                current_in_radius.append((donor, dist))
-        
-        candidate_distances = current_in_radius
-        if len(candidate_distances) >= 3 or radius >= 50.0 or is_emergency:
+        candidate_distances = [(d, dist) for d, dist in eligible_with_distance if dist <= radius]
+        if len(candidate_distances) >= 3 or radius >= 50.0:
             break
 
     # 5. Composite Scoring Formula
-    # Urgency Multiplier
     urgency_multiplier = 1.0
     if request.urgency == RequestUrgency.EMERGENCY or is_emergency:
         urgency_multiplier = 1.5
     elif request.urgency == RequestUrgency.URGENT:
         urgency_multiplier = 1.2
 
+    # Reliability for all candidates in a single grouped query (no N+1).
+    reliability_scores = calculate_reliability_scores(
+        db, [donor.donor_id for donor, _ in candidate_distances]
+    )
+
     scored_candidates = []
     for donor, dist_km in candidate_distances:
         distance_score = 1.0 / (1.0 + dist_km)
-        reliability_score = calculate_reliability_score(db, donor)
+        reliability_score = reliability_scores.get(donor.donor_id, DEFAULT_RELIABILITY)
         recency_score = calculate_recency_score(donor, request.component_type, today)
 
         base_score = (
