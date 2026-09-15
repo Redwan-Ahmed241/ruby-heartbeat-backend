@@ -114,6 +114,31 @@ def register_for_event(
     return participant
 
 
+@router.get("/my-registrations", response_model=List[EventResponse])
+def get_my_registered_events(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Get all events the current user is registered for (status != CANCELLED)."""
+    participant_rows = (
+        db.query(EventParticipant)
+        .filter(
+            EventParticipant.user_id == current_user.user_id,
+            EventParticipant.status != ParticipantStatus.CANCELLED,
+        )
+        .all()
+    )
+    event_ids = [p.event_id for p in participant_rows]
+    if not event_ids:
+        return []
+    return (
+        db.query(DonationEvent)
+        .filter(DonationEvent.event_id.in_(event_ids))
+        .order_by(DonationEvent.start_date.asc())
+        .all()
+    )
+
+
 @router.post("/{event_id}/checkin", response_model=EventParticipantResponse)
 def checkin_participant(
     event_id: UUID,

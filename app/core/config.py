@@ -28,7 +28,8 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "http://127.0.0.1:5173",
         "https://ruby-heartbeat-backend.vercel.app",
-        "https://rubyheartbeat.vercel.app"
+        "https://rubyheartbeat.vercel.app",
+        "https://roktodeojibonbachao.vercel.app",
         "http://127.0.0.1:8080",
 
     ]
