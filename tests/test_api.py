@@ -36,15 +36,15 @@ def test_health_check():
 
 def test_compatibility_matrix():
     """Verify blood compatibility rules."""
-    # O_MINUS can only receive O_MINUS
-    assert get_compatible_donor_groups(BloodGroup.O_MINUS) == [BloodGroup.O_MINUS]
-    assert is_blood_compatible(BloodGroup.O_MINUS, BloodGroup.O_MINUS) is True
-    assert is_blood_compatible(BloodGroup.O_MINUS, BloodGroup.O_PLUS) is False
+    # O_NEGATIVE can only receive O_NEGATIVE
+    assert get_compatible_donor_groups(BloodGroup.O_NEGATIVE) == [BloodGroup.O_NEGATIVE]
+    assert is_blood_compatible(BloodGroup.O_NEGATIVE, BloodGroup.O_NEGATIVE) is True
+    assert is_blood_compatible(BloodGroup.O_NEGATIVE, BloodGroup.O_POSITIVE) is False
 
-    # AB_PLUS is universal recipient
-    assert len(get_compatible_donor_groups(BloodGroup.AB_PLUS)) == 8
-    assert is_blood_compatible(BloodGroup.AB_PLUS, BloodGroup.O_MINUS) is True
-    assert is_blood_compatible(BloodGroup.AB_PLUS, BloodGroup.A_PLUS) is True
+    # AB_POSITIVE is universal recipient
+    assert len(get_compatible_donor_groups(BloodGroup.AB_POSITIVE)) == 8
+    assert is_blood_compatible(BloodGroup.AB_POSITIVE, BloodGroup.O_NEGATIVE) is True
+    assert is_blood_compatible(BloodGroup.AB_POSITIVE, BloodGroup.A_POSITIVE) is True
 
 
 def test_haversine_distance():
@@ -86,7 +86,7 @@ def test_full_user_and_matching_flow():
             "password": "Password123!",
             "role": "DONOR",
             "donor_profile": {
-                "blood_group": "O_PLUS",
+                "blood_group": "O_POSITIVE",
                 "date_of_birth": "1995-05-15",
                 "gender": "Male",
                 "weight": 70.0,
@@ -149,7 +149,7 @@ def test_full_user_and_matching_flow():
         "/api/v1/requests/",
         headers=recip_auth_headers,
         json={
-            "blood_group": "O_PLUS",
+            "blood_group": "O_POSITIVE",
             "component_type": "WHOLE_BLOOD",
             "quantity": 2.0,
             "urgency": "URGENT",
@@ -247,7 +247,7 @@ def test_hospital_inventory_and_expiry_flow():
 
     inv_item = BloodInventory(
         hospital_id=hosp_obj.hospital_id,
-        blood_group=BloodGroup.A_PLUS,
+        blood_group=BloodGroup.A_POSITIVE,
         component_type=ComponentType.WHOLE_BLOOD,
         quantity=60.0,
         unit="ml/unit",

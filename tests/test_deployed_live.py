@@ -79,7 +79,7 @@ def donor_session(unique_id):
             "password": "LiveTest123!",
             "role": "DONOR",
             "donor_profile": {
-                "blood_group": "O_PLUS",
+                "blood_group": "O_POSITIVE",
                 "date_of_birth": "1996-03-20",
                 "gender": "Male",
                 "weight": 72.0,
@@ -182,7 +182,7 @@ def test_f7_matching_and_contact_reveal(donor_session, recipient_session):
         f"{API}/requests/",
         headers=recip_headers,
         json={
-            "blood_group": "O_PLUS",
+            "blood_group": "O_POSITIVE",
             "component_type": "WHOLE_BLOOD",
             "quantity": 1.0,
             "urgency": "URGENT",

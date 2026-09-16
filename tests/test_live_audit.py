@@ -71,7 +71,7 @@ class TestPositiveLifecycleFlows:
 
     def test_02_recipient_creates_request_and_matching_dispatches(self, session, recipient_auth):
         payload = {
-            "blood_group": "O_PLUS",
+            "blood_group": "O_POSITIVE",
             "component_type": "WHOLE_BLOOD",
             "quantity": 1.0,
             "urgency": "NORMAL",
@@ -98,7 +98,7 @@ class TestPositiveLifecycleFlows:
             f"{TARGET_BASE_URL}/requests/",
             headers=recipient_auth,
             json={
-                "blood_group": "O_PLUS",
+                "blood_group": "O_POSITIVE",
                 "component_type": "WHOLE_BLOOD",
                 "quantity": 1.0,
                 "urgency": "URGENT",
@@ -212,7 +212,7 @@ class TestPrivacyAndCornerCases:
             f"{TARGET_BASE_URL}/requests/",
             headers=recipient_auth,
             json={
-                "blood_group": "O_PLUS",
+                "blood_group": "O_POSITIVE",
                 "component_type": "WHOLE_BLOOD",
                 "quantity": 1.0,
                 "urgency": "NORMAL",
@@ -243,7 +243,7 @@ class TestPrivacyAndCornerCases:
             "password": "Password123!",
             "role": "DONOR",
             "donor_profile": {
-                "blood_group": "A_PLUS",
+                "blood_group": "A_POSITIVE",
                 "date_of_birth": "2000-01-01",
                 "gender": "Female",
                 "weight": 42.0,
@@ -271,7 +271,7 @@ class TestPrivacyAndCornerCases:
             "password": "Password123!",
             "role": "DONOR",
             "donor_profile": {
-                "blood_group": "B_PLUS",
+                "blood_group": "B_POSITIVE",
                 "date_of_birth": "2015-06-15",
                 "gender": "Male",
                 "weight": 55.0,
@@ -298,7 +298,7 @@ class TestPrivacyAndCornerCases:
             "password": "Password123!",
             "role": "DONOR",
             "donor_profile": {
-                "blood_group": "O_PLUS",
+                "blood_group": "O_POSITIVE",
                 "date_of_birth": "1998-03-20",
                 "gender": "Female",
                 "weight": 58.0,
@@ -356,7 +356,7 @@ class TestPrivacyAndCornerCases:
             f"{TARGET_BASE_URL}/requests/",
             headers=recipient_auth,
             json={
-                "blood_group": "O_PLUS",
+                "blood_group": "O_POSITIVE",
                 "component_type": "WHOLE_BLOOD",
                 "quantity": 1.0,
                 "urgency": "EMERGENCY",
