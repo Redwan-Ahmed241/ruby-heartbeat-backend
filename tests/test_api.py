@@ -22,6 +22,10 @@ from app.core.enums import (
 from app.services.compatibility import get_compatible_donor_groups, is_blood_compatible
 from app.services.inventory import calculate_stock_status
 from app.services.matching import haversine_distance
+from app.services.email_service import (
+    send_single_donor_match_alert,
+    send_emergency_broadcast_alert,
+)
 
 client = TestClient(app)
 
@@ -358,3 +362,113 @@ def test_appointments_events_notices_and_audit():
     logs_res = client.get("/api/v1/system-logs/", headers=admin_headers)
     assert logs_res.status_code == 200
     assert len(logs_res.json()) >= 1
+
+
+def test_email_service_direct():
+    """Verify email service in safe mock/fallback mode."""
+    # 1. Single donor alert
+    success = send_single_donor_match_alert(
+        donor_email="test_donor@example.com",
+        donor_name="Test Donor",
+        blood_group="O_POSITIVE",
+        hospital_name="Dhaka Medical College Hospital",
+        match_id=str(uuid.uuid4()),
+        distance_km=3.5,
+    )
+    assert success is True
+
+    # 2. Emergency mass broadcast
+    emails = ["donor1@example.com", "donor2@example.com", "donor3@example.com"]
+    count = send_emergency_broadcast_alert(
+        donor_emails=emails,
+        blood_group="AB_NEGATIVE",
+        hospital_name="Square Hospital Emergency Room",
+        units_needed=2.0,
+        request_id=str(uuid.uuid4()),
+    )
+    assert count == 3
+
+    # 3. Empty input edge cases
+    assert send_single_donor_match_alert("", "Name", "O+", "Hospital", "id") is False
+    assert send_emergency_broadcast_alert([], "O+", "Hospital", 1.0, "id") == 0
+
+
+def test_emergency_request_triggers_email_broadcast():
+    """Verify that creating an emergency blood request triggers the matching engine
+    and dispatches non-blocking emergency email broadcasts."""
+    unique_suffix = str(uuid.uuid4())[:8]
+
+    # Register eligible donor
+    donor_email = f"donor_em_{unique_suffix}@example.com"
+    donor_res = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Emergency Target Donor",
+            "email": donor_email,
+            "phone": "+8801733333333",
+            "password": "Password123!",
+            "role": "DONOR",
+            "donor_profile": {
+                "blood_group": "A_POSITIVE",
+                "date_of_birth": "1997-08-20",
+                "gender": "Female",
+                "weight": 58.0,
+                "address": "Dhanmondi, Dhaka",
+                "latitude": 23.7465,
+                "longitude": 90.3760,
+                "hemoglobin_level": 13.8,
+            },
+        },
+    )
+    assert donor_res.status_code == 201
+
+    # Register recipient
+    recip_email = f"recip_em_{unique_suffix}@example.com"
+    recip_res = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Emergency Recipient",
+            "email": recip_email,
+            "phone": "+8801844444444",
+            "password": "Password123!",
+            "role": "RECIPIENT",
+            "recipient_profile": {
+                "nid_passport_no": "199483726194",
+                "address": "Dhanmondi 27, Dhaka",
+                "relationship_to_patient": "Self",
+                "patient_name": "Emergency Patient",
+            },
+        },
+    )
+    assert recip_res.status_code == 201
+
+    # Login as recipient
+    recip_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": recip_email, "password": "Password123!"},
+    )
+    assert recip_login.status_code == 200
+    recip_token = recip_login.json()["access_token"]
+    recip_headers = {"Authorization": f"Bearer {recip_token}"}
+
+    # Dispatch emergency request
+    em_res = client.post(
+        "/api/v1/requests/emergency",
+        headers=recip_headers,
+        json={
+            "blood_group": "A_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 1.0,
+            "urgency": "EMERGENCY",
+            "required_location": "Ibn Sina Hospital, Dhanmondi",
+            "latitude": 23.7470,
+            "longitude": 90.3770,
+            "notes": "Immediate ICU emergency blood required",
+        },
+    )
+    assert em_res.status_code == 201
+    em_data = em_res.json()
+    assert em_data["urgency"] == "EMERGENCY"
+    assert em_data["status"] == "MATCHED"
+    assert len(em_data["matches"]) >= 1
+

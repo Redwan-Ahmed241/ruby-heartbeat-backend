@@ -1,7 +1,7 @@
 """Blood requests router: /api/v1/requests."""
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
@@ -22,6 +22,10 @@ from app.schemas.request import (
 from app.api.deps import get_current_active_user, RequireRoles
 from app.services.matching import run_matching_engine
 from app.services.audit import log_system_action
+from app.services.email_service import (
+    send_single_donor_match_alert,
+    send_emergency_broadcast_alert,
+)
 
 router = APIRouter(prefix="/requests", tags=["Blood Requests"])
 
@@ -72,6 +76,7 @@ def format_blood_request_response(req: BloodRequest) -> BloodRequestResponse:
 @router.post("/", response_model=BloodRequestResponse, status_code=status.HTTP_201_CREATED)
 def create_blood_request(
     request_data: BloodRequestCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(RequireRoles([UserRole.RECIPIENT, UserRole.HOSPITAL_ADMIN, UserRole.SYSTEM_ADMIN])),
     db: Session = Depends(get_db),
 ):
@@ -104,6 +109,40 @@ def create_blood_request(
     if matches:
         blood_req.status = RequestStatus.MATCHED
 
+        blood_group_val = (
+            blood_req.blood_group.value
+            if hasattr(blood_req.blood_group, "value")
+            else str(blood_req.blood_group)
+        )
+
+        if request_data.urgency == RequestUrgency.EMERGENCY:
+            emergency_emails = [
+                m.donor.user.email
+                for m in matches
+                if m.donor and m.donor.user and m.donor.user.email
+            ]
+            if emergency_emails:
+                background_tasks.add_task(
+                    send_emergency_broadcast_alert,
+                    donor_emails=emergency_emails,
+                    blood_group=blood_group_val,
+                    hospital_name=blood_req.required_location,
+                    units_needed=float(blood_req.quantity),
+                    request_id=str(blood_req.request_id),
+                )
+        else:
+            for m in matches:
+                if m.donor and m.donor.user and m.donor.user.email:
+                    background_tasks.add_task(
+                        send_single_donor_match_alert,
+                        donor_email=m.donor.user.email,
+                        donor_name=m.donor.user.full_name or "Valued Donor",
+                        blood_group=blood_group_val,
+                        hospital_name=blood_req.required_location,
+                        match_id=str(m.match_id),
+                        distance_km=float(m.distance_km) if m.distance_km is not None else None,
+                    )
+
     log_system_action(
         db=db,
         action="CREATE_BLOOD_REQUEST",
@@ -121,6 +160,7 @@ def create_blood_request(
 @router.post("/emergency", response_model=BloodRequestResponse, status_code=status.HTTP_201_CREATED)
 def create_emergency_request(
     request_data: BloodRequestCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(RequireRoles([UserRole.RECIPIENT, UserRole.HOSPITAL_ADMIN, UserRole.SYSTEM_ADMIN])),
     db: Session = Depends(get_db),
 ):
@@ -148,6 +188,26 @@ def create_emergency_request(
     matches = run_matching_engine(db=db, request=blood_req, is_emergency=True)
     if matches:
         blood_req.status = RequestStatus.MATCHED
+
+        blood_group_val = (
+            blood_req.blood_group.value
+            if hasattr(blood_req.blood_group, "value")
+            else str(blood_req.blood_group)
+        )
+        emergency_emails = [
+            m.donor.user.email
+            for m in matches
+            if m.donor and m.donor.user and m.donor.user.email
+        ]
+        if emergency_emails:
+            background_tasks.add_task(
+                send_emergency_broadcast_alert,
+                donor_emails=emergency_emails,
+                blood_group=blood_group_val,
+                hospital_name=blood_req.required_location,
+                units_needed=float(blood_req.quantity),
+                request_id=str(blood_req.request_id),
+            )
 
     log_system_action(
         db=db,

@@ -206,6 +206,7 @@ def run_matching_engine(
         match_record = DonorMatch(
             request_id=request.request_id,
             donor_id=donor.donor_id,
+            donor=donor,
             match_score=score,
             distance_km=round(dist_km, 2),
             is_notified=True,  # Dispatched notification flag

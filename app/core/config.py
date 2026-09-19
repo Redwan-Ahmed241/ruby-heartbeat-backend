@@ -1,5 +1,5 @@
 '''Application configuration settings.'''
-from typing import List
+from typing import List, Optional
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -18,6 +18,17 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # Email Settings (Leave blank or omit for Safe Mock Mode)
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_TLS: bool = True
+    EMAILS_FROM_EMAIL: str = "noreply@lifedrop.org"
+    EMAILS_FROM_NAME: str = "LifeDrop Blood Network"
+    RESEND_API_KEY: Optional[str] = None
+    FRONTEND_URL: str = "http://localhost:5173"
 
 
     # CORS Settings
