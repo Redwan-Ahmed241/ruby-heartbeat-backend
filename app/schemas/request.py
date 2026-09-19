@@ -13,6 +13,18 @@ from app.core.enums import (
 )
 
 
+def mask_phone_number(phone: Optional[str]) -> Optional[str]:
+    """Mask phone number for privacy, e.g. 01711223344 -> 017*****344."""
+    if not phone:
+        return None
+    phone_clean = phone.strip()
+    if len(phone_clean) < 6:
+        return "****"
+    if phone_clean.startswith("+880") and len(phone_clean) >= 9:
+        return phone_clean[:6] + "*" * (len(phone_clean) - 8) + phone_clean[-2:]
+    return phone_clean[:3] + "*" * (len(phone_clean) - 5) + phone_clean[-2:]
+
+
 class BloodRequestCreate(BaseModel):
     blood_group: BloodGroup
     component_type: ComponentType
@@ -22,6 +34,11 @@ class BloodRequestCreate(BaseModel):
     latitude: float
     longitude: float
     notes: Optional[str] = None
+    patient_name: Optional[str] = Field(None, max_length=100)
+    hospital_name: Optional[str] = Field(None, max_length=150)
+    area_zone: Optional[str] = Field(None, max_length=100)
+    attendant_phone_number: Optional[str] = Field(None, max_length=25)
+    volume_ml: Optional[float] = Field(None, ge=0)
 
 
 class MaskedDonorMatchResponse(BaseModel):
@@ -55,9 +72,20 @@ class BloodRequestResponse(BaseModel):
     status: RequestStatus
     request_date: Optional[datetime]
     notes: Optional[str]
+    patient_name: Optional[str] = None
+    hospital_name: Optional[str] = None
+    area_zone: Optional[str] = None
+    attendant_phone_number: Optional[str] = None
+    volume_ml: Optional[float] = None
+    accepted_donor_id: Optional[UUID] = None
     matches: Optional[List[MaskedDonorMatchResponse]] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class RequestStatusUpdate(BaseModel):
+    status: RequestStatus
+    accepted_donor_id: Optional[UUID] = None
 
 
 class MatchRespondRequest(BaseModel):

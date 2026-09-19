@@ -18,6 +18,8 @@ from app.schemas.request import (
     BloodRequestCreate,
     BloodRequestResponse,
     MaskedDonorMatchResponse,
+    RequestStatusUpdate,
+    mask_phone_number,
 )
 from app.api.deps import get_current_active_user, RequireRoles
 from app.services.matching import run_matching_engine
@@ -53,9 +55,26 @@ def build_masked_match_response(match: DonorMatch) -> MaskedDonorMatchResponse:
     )
 
 
-def format_blood_request_response(req: BloodRequest) -> BloodRequestResponse:
-    """Format a BloodRequest model into BloodRequestResponse with masked matches."""
+def format_blood_request_response(
+    req: BloodRequest,
+    viewer_user_id: Optional[UUID] = None,
+    is_admin: bool = False,
+) -> BloodRequestResponse:
+    """Format a BloodRequest model into BloodRequestResponse with masked matches and attendant phone privacy."""
     masked_matches = [build_masked_match_response(m) for m in req.matches] if req.matches else []
+
+    # Privacy check for attendant phone number:
+    # Exposed only to:
+    # 1. The recipient owner who created the request (req.recipient_id == viewer_user_id)
+    # 2. The accepted donor (req.accepted_donor_id == viewer_user_id)
+    # 3. Admins
+    is_authorized = (
+        is_admin
+        or (viewer_user_id is not None and (viewer_user_id == req.recipient_id or viewer_user_id == req.accepted_donor_id))
+    )
+
+    exposed_phone = req.attendant_phone_number if is_authorized else mask_phone_number(req.attendant_phone_number)
+
     return BloodRequestResponse(
         request_id=req.request_id,
         recipient_id=req.recipient_id,
@@ -69,6 +88,12 @@ def format_blood_request_response(req: BloodRequest) -> BloodRequestResponse:
         status=req.status,
         request_date=req.request_date,
         notes=req.notes,
+        patient_name=req.patient_name,
+        hospital_name=req.hospital_name,
+        area_zone=req.area_zone,
+        attendant_phone_number=exposed_phone,
+        volume_ml=float(req.volume_ml) if req.volume_ml is not None else None,
+        accepted_donor_id=req.accepted_donor_id,
         matches=masked_matches,
     )
 
@@ -80,7 +105,7 @@ def create_blood_request(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Create blood request and trigger the Intelligent Matching Engine automatically."""
+    """Create blood request with Phase 3 fields and trigger the Intelligent Matching Engine automatically."""
     recipient = db.query(Recipient).filter(Recipient.recipient_id == current_user.user_id).first()
     if not recipient:
         donor_addr = current_user.donor.address if current_user.donor and current_user.donor.address else "Dhaka, Bangladesh"
@@ -96,6 +121,12 @@ def create_blood_request(
 
     recipient_id = recipient.recipient_id
 
+    # Fallback/derivation for Phase 3 fields if omitted
+    patient_name = request_data.patient_name or recipient.patient_name or current_user.full_name
+    hospital_name = request_data.hospital_name or request_data.required_location
+    attendant_phone = request_data.attendant_phone_number or current_user.phone
+    volume_ml = request_data.volume_ml if request_data.volume_ml is not None else (float(request_data.quantity) * 450.0)
+
     blood_req = BloodRequest(
         recipient_id=recipient_id,
         blood_group=request_data.blood_group,
@@ -105,21 +136,26 @@ def create_blood_request(
         required_location=request_data.required_location,
         latitude=request_data.latitude,
         longitude=request_data.longitude,
-        status=RequestStatus.PENDING,
+        status=RequestStatus.OPEN,
         notes=request_data.notes,
+        patient_name=patient_name,
+        hospital_name=hospital_name,
+        area_zone=request_data.area_zone,
+        attendant_phone_number=attendant_phone,
+        volume_ml=volume_ml,
     )
     db.add(blood_req)
     db.flush()
 
     matches = run_matching_engine(db=db, request=blood_req, is_emergency=(request_data.urgency == RequestUrgency.EMERGENCY))
     if matches:
-        blood_req.status = RequestStatus.MATCHED
-
         blood_group_val = (
             blood_req.blood_group.value
             if hasattr(blood_req.blood_group, "value")
             else str(blood_req.blood_group)
         )
+
+        display_hospital = blood_req.hospital_name or blood_req.required_location
 
         if request_data.urgency == RequestUrgency.EMERGENCY:
             emergency_emails = [
@@ -132,7 +168,7 @@ def create_blood_request(
                     send_emergency_broadcast_alert,
                     donor_emails=emergency_emails,
                     blood_group=blood_group_val,
-                    hospital_name=blood_req.required_location,
+                    hospital_name=display_hospital,
                     units_needed=float(blood_req.quantity),
                     request_id=str(blood_req.request_id),
                 )
@@ -144,7 +180,7 @@ def create_blood_request(
                         donor_email=m.donor.user.email,
                         donor_name=m.donor.user.full_name or "Valued Donor",
                         blood_group=blood_group_val,
-                        hospital_name=blood_req.required_location,
+                        hospital_name=display_hospital,
                         match_id=str(m.match_id),
                         distance_km=float(m.distance_km) if m.distance_km is not None else None,
                     )
@@ -160,7 +196,7 @@ def create_blood_request(
     db.commit()
     db.refresh(blood_req)
 
-    return format_blood_request_response(blood_req)
+    return format_blood_request_response(blood_req, viewer_user_id=current_user.user_id, is_admin=False)
 
 
 @router.post("/emergency", response_model=BloodRequestResponse, status_code=status.HTTP_201_CREATED)
@@ -172,7 +208,7 @@ def create_emergency_request(
 ):
     """High-priority endpoint: bypasses queues, expands radius immediately to 50 km, flags as EMERGENCY."""
     request_data.urgency = RequestUrgency.EMERGENCY
-    
+
     recipient = db.query(Recipient).filter(Recipient.recipient_id == current_user.user_id).first()
     if not recipient:
         donor_addr = current_user.donor.address if current_user.donor and current_user.donor.address else "Dhaka, Bangladesh"
@@ -188,6 +224,11 @@ def create_emergency_request(
 
     recipient_id = recipient.recipient_id
 
+    patient_name = request_data.patient_name or recipient.patient_name or current_user.full_name
+    hospital_name = request_data.hospital_name or request_data.required_location
+    attendant_phone = request_data.attendant_phone_number or current_user.phone
+    volume_ml = request_data.volume_ml if request_data.volume_ml is not None else (float(request_data.quantity) * 450.0)
+
     blood_req = BloodRequest(
         recipient_id=recipient_id,
         blood_group=request_data.blood_group,
@@ -197,21 +238,26 @@ def create_emergency_request(
         required_location=request_data.required_location,
         latitude=request_data.latitude,
         longitude=request_data.longitude,
-        status=RequestStatus.PENDING,
+        status=RequestStatus.OPEN,
         notes=request_data.notes,
+        patient_name=patient_name,
+        hospital_name=hospital_name,
+        area_zone=request_data.area_zone,
+        attendant_phone_number=attendant_phone,
+        volume_ml=volume_ml,
     )
     db.add(blood_req)
     db.flush()
 
     matches = run_matching_engine(db=db, request=blood_req, is_emergency=True)
     if matches:
-        blood_req.status = RequestStatus.MATCHED
-
         blood_group_val = (
             blood_req.blood_group.value
             if hasattr(blood_req.blood_group, "value")
             else str(blood_req.blood_group)
         )
+        display_hospital = blood_req.hospital_name or blood_req.required_location
+
         emergency_emails = [
             m.donor.user.email
             for m in matches
@@ -222,7 +268,7 @@ def create_emergency_request(
                 send_emergency_broadcast_alert,
                 donor_emails=emergency_emails,
                 blood_group=blood_group_val,
-                hospital_name=blood_req.required_location,
+                hospital_name=display_hospital,
                 units_needed=float(blood_req.quantity),
                 request_id=str(blood_req.request_id),
             )
@@ -238,7 +284,7 @@ def create_emergency_request(
     db.commit()
     db.refresh(blood_req)
 
-    return format_blood_request_response(blood_req)
+    return format_blood_request_response(blood_req, viewer_user_id=current_user.user_id, is_admin=False)
 
 
 @router.get("/", response_model=List[BloodRequestResponse])
@@ -249,7 +295,7 @@ def list_blood_requests(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """List blood requests with filters."""
+    """List blood requests with filters and attendant phone privacy protection."""
     query = db.query(BloodRequest).options(
         joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user)
     )
@@ -262,7 +308,11 @@ def list_blood_requests(
         query = query.filter(BloodRequest.status == status_filter)
 
     requests = query.order_by(BloodRequest.request_date.desc()).all()
-    return [format_blood_request_response(req) for req in requests]
+    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
+    return [
+        format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=is_admin)
+        for req in requests
+    ]
 
 
 @router.get("/{request_id}", response_model=BloodRequestResponse)
@@ -271,7 +321,7 @@ def get_blood_request(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Get request details by ID."""
+    """Get request details by ID with privacy protection."""
     req = (
         db.query(BloodRequest)
         .options(
@@ -286,7 +336,57 @@ def get_blood_request(
             detail="Blood request not found.",
         )
 
-    return format_blood_request_response(req)
+    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
+    return format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=is_admin)
+
+
+@router.patch("/{request_id}/status", response_model=BloodRequestResponse)
+def update_request_status(
+    request_id: UUID,
+    status_update: RequestStatusUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Update blood request lifecycle status: OPEN -> ACCEPTED -> PROCESSING -> COMPLETED / CANCELLED."""
+    req = db.query(BloodRequest).filter(BloodRequest.request_id == request_id).first()
+    if not req:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Blood request not found.",
+        )
+
+    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
+    is_owner = (req.recipient_id == current_user.user_id)
+    is_accepted_donor = (req.accepted_donor_id == current_user.user_id)
+
+    # Permission check
+    if not (is_admin or is_owner or is_accepted_donor):
+        # A compatible user accepting the request can transition to ACCEPTED
+        if status_update.status == RequestStatus.ACCEPTED:
+            req.accepted_donor_id = current_user.user_id
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this blood request status.",
+            )
+
+    req.status = status_update.status
+    if status_update.accepted_donor_id:
+        req.accepted_donor_id = status_update.accepted_donor_id
+    elif status_update.status == RequestStatus.ACCEPTED and not req.accepted_donor_id:
+        req.accepted_donor_id = current_user.user_id
+
+    log_system_action(
+        db=db,
+        action=f"UPDATE_REQUEST_STATUS_{status_update.status.value}",
+        entity="blood_requests",
+        entity_id=req.request_id,
+        user_id=current_user.user_id,
+    )
+
+    db.commit()
+    db.refresh(req)
+    return format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=is_admin)
 
 
 @router.get("/{request_id}/matches", response_model=List[MaskedDonorMatchResponse])

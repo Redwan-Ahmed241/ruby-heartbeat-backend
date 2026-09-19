@@ -165,7 +165,7 @@ def test_full_user_and_matching_flow():
     )
     assert req_res.status_code == 201
     req_data = req_res.json()
-    assert req_data["status"] == "MATCHED"
+    assert req_data["status"] in ["OPEN", "MATCHED"]
     assert len(req_data["matches"]) >= 1
 
     # Find the match corresponding to our newly registered donor
@@ -469,7 +469,7 @@ def test_emergency_request_triggers_email_broadcast():
     assert em_res.status_code == 201
     em_data = em_res.json()
     assert em_data["urgency"] == "EMERGENCY"
-    assert em_data["status"] == "MATCHED"
+    assert em_data["status"] in ["OPEN", "MATCHED"]
     assert len(em_data["matches"]) >= 1
 
 
@@ -569,5 +569,120 @@ def test_unified_user_dual_capabilities():
     )
     assert em_res.status_code == 201
     assert em_res.json()["urgency"] == "EMERGENCY"
+
+
+def test_blood_request_phase3_fields_and_privacy_masking():
+    """Test Phase 3: Blood request schema with patient/hospital/area/volume/attendant phone,
+    privacy phone masking for public viewers, and request status lifecycle.
+    """
+    uid_a = uuid.uuid4().hex[:8]
+    email_a = f"req_owner_{uid_a}@example.com"
+    reg_a = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Request Owner A",
+            "email": email_a,
+            "phone": "+8801711001122",
+            "password": "Password123!",
+            "blood_group": "A_POSITIVE",
+            "address": "Dhanmondi, Dhaka",
+        },
+    )
+    assert reg_a.status_code == 201
+    token_a = client.post(
+        "/api/v1/auth/login",
+        json={"email": email_a, "password": "Password123!"},
+    ).json()["access_token"]
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+
+    uid_b = uuid.uuid4().hex[:8]
+    email_b = f"req_viewer_{uid_b}@example.com"
+    reg_b = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Donor Viewer B",
+            "email": email_b,
+            "phone": "+8801822003344",
+            "password": "Password123!",
+            "blood_group": "A_POSITIVE",
+            "address": "Panthapath, Dhaka",
+        },
+    )
+    assert reg_b.status_code == 201
+    token_b = client.post(
+        "/api/v1/auth/login",
+        json={"email": email_b, "password": "Password123!"},
+    ).json()["access_token"]
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    # 1. Create request with Phase 3 fields
+    create_res = client.post(
+        "/api/v1/requests/",
+        headers=headers_a,
+        json={
+            "blood_group": "A_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 2.0,
+            "urgency": "NORMAL",
+            "required_location": "Square Hospital, Panthapath",
+            "latitude": 23.7531,
+            "longitude": 90.3817,
+            "notes": "Emergency surgery support",
+            "patient_name": "Test Patient Khan",
+            "hospital_name": "Square Hospital",
+            "area_zone": "Panthapath",
+            "attendant_phone_number": "+8801711998877",
+            "volume_ml": 900.0,
+        },
+    )
+    assert create_res.status_code == 201
+    req_data = create_res.json()
+    req_id = req_data["request_id"]
+    assert req_data["status"] == "OPEN"
+    assert req_data["patient_name"] == "Test Patient Khan"
+    assert req_data["hospital_name"] == "Square Hospital"
+    assert req_data["area_zone"] == "Panthapath"
+    assert req_data["volume_ml"] == 900.0
+    # Owner sees full attendant phone
+    assert req_data["attendant_phone_number"] == "+8801711998877"
+
+    # 2. Viewer B (public/unmatched donor) retrieves request -> phone MUST be masked
+    get_res_b = client.get(f"/api/v1/requests/{req_id}", headers=headers_b)
+    assert get_res_b.status_code == 200
+    viewer_b_data = get_res_b.json()
+    assert viewer_b_data["attendant_phone_number"] != "+8801711998877"
+    assert "*" in viewer_b_data["attendant_phone_number"]
+
+    # 3. Status Lifecycle: Viewer B accepts the request
+    accept_res = client.patch(
+        f"/api/v1/requests/{req_id}/status",
+        headers=headers_b,
+        json={"status": "ACCEPTED"},
+    )
+    assert accept_res.status_code == 200
+    accepted_data = accept_res.json()
+    assert accepted_data["status"] == "ACCEPTED"
+    assert accepted_data["accepted_donor_id"] is not None
+    # Now that Viewer B is the accepted donor, they see the unmasked phone!
+    assert accepted_data["attendant_phone_number"] == "+8801711998877"
+
+    # 4. Status Lifecycle: Transition to PROCESSING
+    proc_res = client.patch(
+        f"/api/v1/requests/{req_id}/status",
+        headers=headers_a,
+        json={"status": "PROCESSING"},
+    )
+    assert proc_res.status_code == 200
+    assert proc_res.json()["status"] == "PROCESSING"
+
+    # 5. Status Lifecycle: Transition to COMPLETED
+    comp_res = client.patch(
+        f"/api/v1/requests/{req_id}/status",
+        headers=headers_a,
+        json={"status": "COMPLETED"},
+    )
+    assert comp_res.status_code == 200
+    assert comp_res.json()["status"] == "COMPLETED"
+
 
 

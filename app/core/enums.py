@@ -39,8 +39,11 @@ class RequestUrgency(str, Enum):
 
 
 class RequestStatus(str, Enum):
+    OPEN = "OPEN"
     PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
     MATCHED = "MATCHED"
+    PROCESSING = "PROCESSING"
     COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
 

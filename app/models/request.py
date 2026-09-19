@@ -47,14 +47,27 @@ class BloodRequest(Base):
     longitude = Column(Numeric(9, 6), nullable=False)
     status = Column(
         SQLEnum(RequestStatus, name="request_status_enum"),
-        default=RequestStatus.PENDING,
+        default=RequestStatus.OPEN,
         nullable=False,
     )
     request_date = Column(DateTime, default=datetime.utcnow, server_default=func.now())
     notes = Column(Text, nullable=True)
 
+    # Phase 3 Fields
+    patient_name = Column(String(100), nullable=True)
+    hospital_name = Column(String(150), nullable=True)
+    area_zone = Column(String(100), nullable=True)
+    attendant_phone_number = Column(String(25), nullable=True)
+    volume_ml = Column(Numeric(6, 2), nullable=True)
+    accepted_donor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # Relationships
     recipient = relationship("Recipient", back_populates="blood_requests")
+    accepted_donor = relationship("User", foreign_keys=[accepted_donor_id])
     matches = relationship("DonorMatch", back_populates="blood_request", cascade="all, delete-orphan")
 
 
