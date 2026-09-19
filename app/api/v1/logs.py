@@ -7,7 +7,7 @@ from app.core.database import get_db
 from app.core.enums import UserRole
 from app.models.user import User
 from app.models.audit import SystemLog
-from app.schemas.appointment import SystemLogResponse
+from app.schemas.events_notices import SystemLogResponse
 from app.api.deps import RequireRoles
 
 router = APIRouter(prefix="/system-logs", tags=["System Logs"])

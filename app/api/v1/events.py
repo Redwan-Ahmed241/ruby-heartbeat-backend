@@ -14,7 +14,7 @@ from app.core.enums import (
 )
 from app.models.user import User
 from app.models.event import DonationEvent, EventParticipant
-from app.schemas.appointment import (
+from app.schemas.events_notices import (
     DonationEventCreate,
     EventResponse,
     EventParticipantCreate,

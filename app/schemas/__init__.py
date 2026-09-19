@@ -35,10 +35,7 @@ from app.schemas.inventory import (
     InventoryTransactionResponse,
     ExpiryScanResponse,
 )
-from app.schemas.appointment import (
-    AppointmentCreate,
-    AppointmentStatusUpdate,
-    AppointmentResponse,
+from app.schemas.events_notices import (
     DonationEventCreate,
     EventResponse,
     EventParticipantCreate,

@@ -63,12 +63,6 @@ class MatchResponseStatus(str, Enum):
     DECLINED = "DECLINED"
 
 
-class AppointmentStatus(str, Enum):
-    SCHEDULED = "SCHEDULED"
-    COMPLETED = "COMPLETED"
-    CANCELLED = "CANCELLED"
-
-
 class EventStatus(str, Enum):
     UPCOMING = "UPCOMING"
     ONGOING = "ONGOING"

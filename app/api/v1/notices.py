@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.core.enums import UserRole
 from app.models.user import User
 from app.models.event import CampaignNotice
-from app.schemas.appointment import CampaignNoticeCreate, CampaignNoticeResponse
+from app.schemas.events_notices import CampaignNoticeCreate, CampaignNoticeResponse
 from app.api.deps import RequireRoles
 from app.services.audit import log_system_action
 

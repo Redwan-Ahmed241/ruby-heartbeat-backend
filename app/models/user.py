@@ -85,7 +85,6 @@ class Donor(Base):
     medical_info = relationship("MedicalInfo", back_populates="donor", uselist=False, cascade="all, delete-orphan")
     donation_history = relationship("DonationHistory", back_populates="donor", cascade="all, delete-orphan")
     matches = relationship("DonorMatch", back_populates="donor", cascade="all, delete-orphan")
-    appointments = relationship("Appointment", back_populates="donor", cascade="all, delete-orphan")
 
 
 class MedicalInfo(Base):
@@ -187,4 +186,3 @@ class Hospital(Base):
     # Relationships
     user = relationship("User", back_populates="hospital")
     inventory = relationship("BloodInventory", back_populates="hospital", cascade="all, delete-orphan")
-    appointments = relationship("Appointment", back_populates="hospital", cascade="all, delete-orphan")

@@ -291,8 +291,8 @@ def test_hospital_inventory_and_expiry_flow():
     assert scan_data["expiring_soon_count"] >= 1
 
 
-def test_appointments_events_notices_and_audit():
-    """Test appointments booking, event creation & registration, notices, and system audit logs."""
+def test_events_notices_and_audit():
+    """Test event creation & registration, campaign notices, and system audit logs."""
     unique_suffix = str(uuid.uuid4())[:8]
 
     # Create system admin

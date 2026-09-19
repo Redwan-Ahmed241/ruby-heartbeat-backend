@@ -1,37 +1,13 @@
-"""Pydantic schemas for appointments, events, campaign notices, and system audit logs."""
-from datetime import datetime, date, time
-from typing import Optional, List
+"""Pydantic schemas for events, campaign notices, and system audit logs."""
+from datetime import datetime, date
+from typing import Optional
 from uuid import UUID
 from pydantic import BaseModel, Field, ConfigDict
 from app.core.enums import (
-    AppointmentStatus,
     EventStatus,
     ParticipantRole,
     ParticipantStatus,
 )
-
-
-class AppointmentCreate(BaseModel):
-    center_id: UUID
-    appointment_date: date
-    appointment_time: time
-
-
-class AppointmentStatusUpdate(BaseModel):
-    status: AppointmentStatus
-
-
-class AppointmentResponse(BaseModel):
-    appointment_id: UUID
-    donor_id: UUID
-    center_id: UUID
-    appointment_date: date
-    appointment_time: time
-    status: AppointmentStatus
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class DonationEventCreate(BaseModel):
@@ -106,3 +82,4 @@ class SystemLogResponse(BaseModel):
     timestamp: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
