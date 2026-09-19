@@ -135,6 +135,7 @@ def run_matching_engine(
         db.query(Donor)
         .options(joinedload(Donor.medical_info), joinedload(Donor.user))
         .filter(
+            Donor.donor_id != request.recipient_id,
             Donor.blood_group.in_(compatible_groups),
             Donor.availability_status == AvailabilityStatus.AVAILABLE,
             Donor.latitude.between(req_lat - lat_delta, req_lat + lat_delta),

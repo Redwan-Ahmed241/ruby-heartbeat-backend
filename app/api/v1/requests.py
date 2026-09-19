@@ -77,18 +77,24 @@ def format_blood_request_response(req: BloodRequest) -> BloodRequestResponse:
 def create_blood_request(
     request_data: BloodRequestCreate,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(RequireRoles([UserRole.RECIPIENT, UserRole.HOSPITAL_ADMIN, UserRole.SYSTEM_ADMIN])),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     """Create blood request and trigger the Intelligent Matching Engine automatically."""
     recipient = db.query(Recipient).filter(Recipient.recipient_id == current_user.user_id).first()
-    if not recipient and current_user.role == UserRole.RECIPIENT:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Recipient profile not found for this user.",
+    if not recipient:
+        donor_addr = current_user.donor.address if current_user.donor and current_user.donor.address else "Dhaka, Bangladesh"
+        recipient = Recipient(
+            recipient_id=current_user.user_id,
+            nid_passport_no="N/A",
+            address=donor_addr,
+            relationship_to_patient="Self",
+            patient_name=current_user.full_name,
         )
+        db.add(recipient)
+        db.flush()
 
-    recipient_id = recipient.recipient_id if recipient else current_user.user_id
+    recipient_id = recipient.recipient_id
 
     blood_req = BloodRequest(
         recipient_id=recipient_id,
@@ -161,14 +167,26 @@ def create_blood_request(
 def create_emergency_request(
     request_data: BloodRequestCreate,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(RequireRoles([UserRole.RECIPIENT, UserRole.HOSPITAL_ADMIN, UserRole.SYSTEM_ADMIN])),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     """High-priority endpoint: bypasses queues, expands radius immediately to 50 km, flags as EMERGENCY."""
     request_data.urgency = RequestUrgency.EMERGENCY
     
     recipient = db.query(Recipient).filter(Recipient.recipient_id == current_user.user_id).first()
-    recipient_id = recipient.recipient_id if recipient else current_user.user_id
+    if not recipient:
+        donor_addr = current_user.donor.address if current_user.donor and current_user.donor.address else "Dhaka, Bangladesh"
+        recipient = Recipient(
+            recipient_id=current_user.user_id,
+            nid_passport_no="N/A",
+            address=donor_addr,
+            relationship_to_patient="Self",
+            patient_name=current_user.full_name,
+        )
+        db.add(recipient)
+        db.flush()
+
+    recipient_id = recipient.recipient_id
 
     blood_req = BloodRequest(
         recipient_id=recipient_id,

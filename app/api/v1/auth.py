@@ -1,5 +1,5 @@
 """Authentication router: /api/v1/auth."""
-from datetime import timedelta
+from datetime import timedelta, date
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from jwt.exceptions import PyJWTError
@@ -13,7 +13,7 @@ from app.core.security import (
     create_refresh_token,
     decode_token,
 )
-from app.core.enums import UserRole, UserStatus
+from app.core.enums import UserRole, UserStatus, BloodGroup
 from app.models.user import User, Donor, MedicalInfo, Recipient, Hospital
 from app.schemas.auth import (
     UserRegisterRequest,
@@ -39,67 +39,23 @@ def register(request_data: UserRegisterRequest, request: Request, db: Session = 
             detail="A user with this email already exists.",
         )
 
+    # Determine role (defaults to DONOR for regular users)
+    target_role = request_data.role or UserRole.DONOR
+
     # Create base user
     new_user = User(
         full_name=request_data.full_name,
         email=request_data.email,
         phone=request_data.phone,
         password_hash=hash_password(request_data.password),
-        role=request_data.role,
+        role=target_role,
         status=UserStatus.ACTIVE,
     )
     db.add(new_user)
     db.flush()
 
-    # Atomically create role child profile
-    if request_data.role == UserRole.DONOR:
-        if not request_data.donor_profile:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Donor profile data is required for role DONOR.",
-            )
-        dp = request_data.donor_profile
-        donor = Donor(
-            donor_id=new_user.user_id,
-            blood_group=dp.blood_group,
-            date_of_birth=dp.date_of_birth,
-            gender=dp.gender,
-            weight=dp.weight,
-            address=dp.address,
-            latitude=dp.latitude,
-            longitude=dp.longitude,
-        )
-        db.add(donor)
-        db.flush()
-
-        # Create initial medical info
-        medical_info = MedicalInfo(
-            donor_id=donor.donor_id,
-            hemoglobin_level=dp.hemoglobin_level or 13.0,
-            chronic_diseases=dp.chronic_diseases,
-            medications=dp.medications,
-            allergies=dp.allergies,
-            other_notes=dp.other_notes,
-        )
-        db.add(medical_info)
-
-    elif request_data.role == UserRole.RECIPIENT:
-        if not request_data.recipient_profile:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Recipient profile data is required for role RECIPIENT.",
-            )
-        rp = request_data.recipient_profile
-        recipient = Recipient(
-            recipient_id=new_user.user_id,
-            nid_passport_no=rp.nid_passport_no,
-            address=rp.address,
-            relationship_to_patient=rp.relationship_to_patient,
-            patient_name=rp.patient_name,
-        )
-        db.add(recipient)
-
-    elif request_data.role == UserRole.HOSPITAL_ADMIN:
+    # Atomically provision role profiles
+    if target_role == UserRole.HOSPITAL_ADMIN:
         if not request_data.hospital_profile:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -115,6 +71,97 @@ def register(request_data: UserRegisterRequest, request: Request, db: Session = 
             contact_number=hp.contact_number,
         )
         db.add(hospital)
+
+    elif target_role == UserRole.SYSTEM_ADMIN:
+        # System Administrator account does not require donor/recipient capability records
+        pass
+
+    else:
+        # Unified regular user (Zero-DDL Dual Capability: Donor + Recipient)
+        dp = request_data.donor_profile
+        rp = request_data.recipient_profile
+
+        # 1. Resolve & create Donor profile
+        donor_blood_group = (
+            dp.blood_group if dp and dp.blood_group
+            else request_data.blood_group or BloodGroup.O_POSITIVE
+        )
+        donor_dob = (
+            dp.date_of_birth if dp and dp.date_of_birth
+            else request_data.date_of_birth or date(2000, 1, 1)
+        )
+        donor_gender = (
+            dp.gender if dp and dp.gender
+            else request_data.gender or "Other"
+        )
+        donor_weight = (
+            dp.weight if dp and dp.weight
+            else request_data.weight or 65.0
+        )
+        donor_address = (
+            dp.address if dp and dp.address
+            else request_data.address
+            or (rp.address if rp and rp.address else "Dhaka, Bangladesh")
+        )
+        donor_lat = (
+            dp.latitude if dp and dp.latitude is not None
+            else request_data.latitude if request_data.latitude is not None else 23.8103
+        )
+        donor_lng = (
+            dp.longitude if dp and dp.longitude is not None
+            else request_data.longitude if request_data.longitude is not None else 90.4125
+        )
+
+        donor = Donor(
+            donor_id=new_user.user_id,
+            blood_group=donor_blood_group,
+            date_of_birth=donor_dob,
+            gender=donor_gender,
+            weight=donor_weight,
+            address=donor_address,
+            latitude=donor_lat,
+            longitude=donor_lng,
+        )
+        db.add(donor)
+        db.flush()
+
+        # Initial medical info for donor capability
+        medical_info = MedicalInfo(
+            donor_id=donor.donor_id,
+            hemoglobin_level=(dp.hemoglobin_level if dp and dp.hemoglobin_level else 13.0),
+            chronic_diseases=(dp.chronic_diseases if dp else None),
+            medications=(dp.medications if dp else None),
+            allergies=(dp.allergies if dp else None),
+            other_notes=(dp.other_notes if dp else None),
+        )
+        db.add(medical_info)
+
+        # 2. Resolve & create Recipient profile
+        recipient_nid = (
+            rp.nid_passport_no if rp and rp.nid_passport_no
+            else request_data.nid_passport_no or "N/A"
+        )
+        recipient_address = (
+            rp.address if rp and rp.address
+            else donor_address
+        )
+        recipient_rel = (
+            rp.relationship_to_patient if rp and rp.relationship_to_patient
+            else "Self"
+        )
+        recipient_patient = (
+            rp.patient_name if rp and rp.patient_name
+            else new_user.full_name
+        )
+
+        recipient = Recipient(
+            recipient_id=new_user.user_id,
+            nid_passport_no=recipient_nid,
+            address=recipient_address,
+            relationship_to_patient=recipient_rel,
+            patient_name=recipient_patient,
+        )
+        db.add(recipient)
 
     # Log action
     log_system_action(

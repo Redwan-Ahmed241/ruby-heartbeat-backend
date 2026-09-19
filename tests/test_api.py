@@ -472,3 +472,102 @@ def test_emergency_request_triggers_email_broadcast():
     assert em_data["status"] == "MATCHED"
     assert len(em_data["matches"]) >= 1
 
+
+def test_unified_user_dual_capabilities():
+    """Phase 2 Verification: Verify that a single unified user account
+    has BOTH Donor and Recipient capabilities simultaneously."""
+    unique_suffix = str(uuid.uuid4())[:8]
+    user_email = f"unified_{unique_suffix}@example.com"
+
+    # 1. Register with top-level unified identity fields (single signup flow)
+    reg_res = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Unified Member",
+            "email": user_email,
+            "phone": "+8801755555555",
+            "password": "Password123!",
+            "blood_group": "B_POSITIVE",
+            "date_of_birth": "1996-03-25",
+            "gender": "Male",
+            "weight": 68.0,
+            "address": "Mirpur 10, Dhaka",
+            "latitude": 23.8041,
+            "longitude": 90.3667,
+        },
+    )
+    assert reg_res.status_code == 201
+    user_data = reg_res.json()
+    assert user_data["donor"] is not None
+    assert user_data["donor"]["blood_group"] == "B_POSITIVE"
+    assert user_data["recipient"] is not None
+    assert user_data["recipient"]["patient_name"] == "Unified Member"
+
+    # 2. Login
+    login_res = client.post(
+        "/api/v1/auth/login",
+        json={"email": user_email, "password": "Password123!"},
+    )
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 3. Donor Capability: Check Eligibility
+    elig_res = client.get("/api/v1/donors/eligibility", headers=headers)
+    assert elig_res.status_code == 200
+    assert elig_res.json()["is_eligible"] is True
+
+    # 4. Donor Capability: Toggle Availability Status
+    avail_res = client.patch(
+        "/api/v1/donors/availability",
+        headers=headers,
+        json={"availability_status": "UNAVAILABLE"},
+    )
+    assert avail_res.status_code == 200
+    assert avail_res.json()["availability_status"] == "UNAVAILABLE"
+
+    avail_res_on = client.patch(
+        "/api/v1/donors/availability",
+        headers=headers,
+        json={"availability_status": "AVAILABLE"},
+    )
+    assert avail_res_on.status_code == 200
+    assert avail_res_on.json()["availability_status"] == "AVAILABLE"
+
+    # 5. Recipient Capability: Create Blood Request under the exact same login
+    req_res = client.post(
+        "/api/v1/requests/",
+        headers=headers,
+        json={
+            "blood_group": "B_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 1.0,
+            "urgency": "NORMAL",
+            "required_location": "Mirpur General Hospital, Dhaka",
+            "latitude": 23.8050,
+            "longitude": 90.3680,
+            "notes": "Unified account request test",
+        },
+    )
+    assert req_res.status_code == 201
+    assert req_res.json()["blood_group"] == "B_POSITIVE"
+
+    # 6. Recipient Capability: Create Emergency Request under the exact same login
+    em_res = client.post(
+        "/api/v1/requests/emergency",
+        headers=headers,
+        json={
+            "blood_group": "B_POSITIVE",
+            "component_type": "PLATELETS",
+            "quantity": 2.0,
+            "urgency": "EMERGENCY",
+            "required_location": "National Heart Foundation, Mirpur",
+            "latitude": 23.8060,
+            "longitude": 90.3690,
+            "notes": "Urgent platelets needed",
+        },
+    )
+    assert em_res.status_code == 201
+    assert em_res.json()["urgency"] == "EMERGENCY"
+
+

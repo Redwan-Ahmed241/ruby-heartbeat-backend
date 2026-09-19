@@ -63,12 +63,23 @@ class UserRegisterRequest(BaseModel):
     email: EmailStr
     phone: str = Field(..., min_length=6, max_length=20)
     password: str = Field(..., min_length=6)
-    role: UserRole
+    role: Optional[UserRole] = UserRole.DONOR
 
-    # Role-specific profiles (provided based on role)
+    # Unified account profile fields (for single registration flow)
+    blood_group: Optional[BloodGroup] = None
+    date_of_birth: Optional[date] = None
+    gender: Optional[str] = Field(default=None, max_length=10)
+    weight: Optional[float] = Field(default=None, ge=20.0, le=300.0)
+    address: Optional[str] = Field(default=None, max_length=255)
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    nid_passport_no: Optional[str] = Field(default=None, max_length=50)
+
+    # Role-specific profiles (retained for backward compatibility)
     donor_profile: Optional[DonorProfileCreate] = None
     recipient_profile: Optional[RecipientProfileCreate] = None
     hospital_profile: Optional[HospitalProfileCreate] = None
+
 
 
 class DonorBriefResponse(BaseModel):

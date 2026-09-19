@@ -18,7 +18,7 @@ router = APIRouter(prefix="/matches", tags=["Donor Matches"])
 def respond_to_match(
     match_id: UUID,
     response_data: MatchRespondRequest,
-    current_user: User = Depends(RequireRoles([UserRole.DONOR])),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
     """Donor accepts or declines a match request."""
