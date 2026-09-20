@@ -17,17 +17,21 @@ from app.models.request import BloodRequest, DonorMatch
 from app.schemas.request import (
     BloodRequestCreate,
     BloodRequestResponse,
+    AcceptedDonorSummary,
     MaskedDonorMatchResponse,
     RequestStatusUpdate,
     mask_phone_number,
 )
-from app.api.deps import get_current_active_user, RequireRoles
+from app.api.deps import get_current_active_user, get_current_user_optional, RequireRoles
 from app.services.matching import run_matching_engine
 from app.services.audit import log_system_action
+from app.services.eligibility import check_donor_eligibility
 from app.services.email_service import (
     send_single_donor_match_alert,
     send_emergency_broadcast_alert,
+    send_donor_accepted_alert,
 )
+from app.api.v1.donors import get_or_create_donor
 
 router = APIRouter(prefix="/requests", tags=["Blood Requests"])
 
@@ -75,6 +79,20 @@ def format_blood_request_response(
 
     exposed_phone = req.attendant_phone_number if is_authorized else mask_phone_number(req.attendant_phone_number)
 
+    # Populate accepted donor summary when authorized
+    accepted_donor_summary = None
+    if req.accepted_donor_id and is_authorized and req.accepted_donor:
+        donor_user = req.accepted_donor
+        donor_profile = donor_user.donor
+        area = donor_profile.address if donor_profile else None
+        accepted_donor_summary = AcceptedDonorSummary(
+            donor_id=donor_user.user_id,
+            full_name=donor_user.full_name,
+            phone=donor_user.phone,
+            area_zone=area,
+            email=donor_user.email,
+        )
+
     return BloodRequestResponse(
         request_id=req.request_id,
         recipient_id=req.recipient_id,
@@ -94,6 +112,7 @@ def format_blood_request_response(
         attendant_phone_number=exposed_phone,
         volume_ml=float(req.volume_ml) if req.volume_ml is not None else None,
         accepted_donor_id=req.accepted_donor_id,
+        accepted_donor=accepted_donor_summary,
         matches=masked_matches,
     )
 
@@ -183,6 +202,7 @@ def create_blood_request(
                         hospital_name=display_hospital,
                         match_id=str(m.match_id),
                         distance_km=float(m.distance_km) if m.distance_km is not None else None,
+                        request_id=str(blood_req.request_id),
                     )
 
     log_system_action(
@@ -292,12 +312,13 @@ def list_blood_requests(
     blood_group: Optional[BloodGroup] = None,
     urgency: Optional[RequestUrgency] = None,
     status_filter: Optional[RequestStatus] = Query(None, alias="status"),
-    current_user: User = Depends(get_current_active_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     """List blood requests with filters and attendant phone privacy protection."""
     query = db.query(BloodRequest).options(
-        joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user)
+        joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user),
+        joinedload(BloodRequest.accepted_donor).joinedload(User.donor),
     )
 
     if blood_group:
@@ -308,9 +329,10 @@ def list_blood_requests(
         query = query.filter(BloodRequest.status == status_filter)
 
     requests = query.order_by(BloodRequest.request_date.desc()).all()
-    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
+    viewer_id = current_user.user_id if current_user else None
+    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN] if current_user else False
     return [
-        format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=is_admin)
+        format_blood_request_response(req, viewer_user_id=viewer_id, is_admin=is_admin)
         for req in requests
     ]
 
@@ -318,14 +340,15 @@ def list_blood_requests(
 @router.get("/{request_id}", response_model=BloodRequestResponse)
 def get_blood_request(
     request_id: UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
     """Get request details by ID with privacy protection."""
     req = (
         db.query(BloodRequest)
         .options(
-            joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user)
+            joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user),
+            joinedload(BloodRequest.accepted_donor).joinedload(User.donor),
         )
         .filter(BloodRequest.request_id == request_id)
         .first()
@@ -336,8 +359,104 @@ def get_blood_request(
             detail="Blood request not found.",
         )
 
-    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
-    return format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=is_admin)
+    viewer_id = current_user.user_id if current_user else None
+    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN] if current_user else False
+    return format_blood_request_response(req, viewer_user_id=viewer_id, is_admin=is_admin)
+
+
+@router.post("/{request_id}/accept", response_model=BloodRequestResponse)
+def accept_blood_request(
+    request_id: UUID,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Accept an open blood request as a donor, unmask attendant contact, and notify recipient."""
+    req = (
+        db.query(BloodRequest)
+        .options(
+            joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user),
+            joinedload(BloodRequest.accepted_donor).joinedload(User.donor),
+            joinedload(BloodRequest.recipient).joinedload(Recipient.user),
+        )
+        .filter(BloodRequest.request_id == request_id)
+        .first()
+    )
+    if not req:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Blood request not found.",
+        )
+
+    # 1. Self-acceptance check
+    if req.recipient_id == current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot accept your own blood request.",
+        )
+
+    # 2. Check if already accepted or terminal
+    if req.status == RequestStatus.ACCEPTED:
+        if req.accepted_donor_id == current_user.user_id:
+            return format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=False)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This blood request has already been accepted by another donor.",
+            )
+    elif req.status in [RequestStatus.COMPLETED, RequestStatus.CANCELLED]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"This blood request is no longer active (status: {req.status.value}).",
+        )
+
+    # 3. Eligibility check for current user
+    donor = get_or_create_donor(db, current_user)
+    is_eligible, rejections, metrics = check_donor_eligibility(
+        donor, target_component=req.component_type
+    )
+    if not is_eligible:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "message": "You are not currently eligible to accept this donation request.",
+                "rejections": rejections,
+                "metrics": metrics,
+            },
+        )
+
+    # 4. Set status and accepted donor
+    req.status = RequestStatus.ACCEPTED
+    req.accepted_donor_id = current_user.user_id
+
+    # 5. Dispatch transactional email alert to recipient
+    recipient_user = req.recipient.user if req.recipient and req.recipient.user else None
+    if not recipient_user:
+        recipient_user = db.query(User).filter(User.user_id == req.recipient_id).first()
+
+    if recipient_user and recipient_user.email:
+        background_tasks.add_task(
+            send_donor_accepted_alert,
+            recipient_email=recipient_user.email,
+            recipient_name=recipient_user.full_name or "Recipient",
+            donor_name=current_user.full_name,
+            donor_phone=current_user.phone,
+            donor_area=donor.address or "Dhaka, Bangladesh",
+            request_id=str(req.request_id),
+        )
+
+    log_system_action(
+        db=db,
+        action="ACCEPT_BLOOD_REQUEST",
+        entity="blood_requests",
+        entity_id=req.request_id,
+        user_id=current_user.user_id,
+    )
+
+    db.commit()
+    db.refresh(req)
+
+    return format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=False)
 
 
 @router.patch("/{request_id}/status", response_model=BloodRequestResponse)
@@ -348,7 +467,15 @@ def update_request_status(
     db: Session = Depends(get_db),
 ):
     """Update blood request lifecycle status: OPEN -> ACCEPTED -> PROCESSING -> COMPLETED / CANCELLED."""
-    req = db.query(BloodRequest).filter(BloodRequest.request_id == request_id).first()
+    req = (
+        db.query(BloodRequest)
+        .options(
+            joinedload(BloodRequest.accepted_donor).joinedload(User.donor),
+            joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user),
+        )
+        .filter(BloodRequest.request_id == request_id)
+        .first()
+    )
     if not req:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

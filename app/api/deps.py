@@ -1,5 +1,5 @@
 """Authentication and authorization dependencies."""
-from typing import List
+from typing import List, Optional
 from uuid import UUID
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -12,6 +12,30 @@ from app.core.enums import UserRole, UserStatus
 from app.models.user import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
+
+
+def get_current_user_optional(
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """Retrieve current user if a valid bearer token is provided, or None if unauthenticated."""
+    if not token:
+        return None
+    try:
+        payload = decode_token(token)
+        if payload.get("type") != "access":
+            return None
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            return None
+        user = db.query(User).filter(User.user_id == UUID(user_id_str)).first()
+        if user and user.status == UserStatus.ACTIVE:
+            return user
+        return None
+    except Exception:
+        return None
+
 
 
 def get_current_user(

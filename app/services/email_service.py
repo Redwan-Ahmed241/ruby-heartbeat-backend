@@ -24,10 +24,15 @@ def _render_single_match_html(
     hospital_name: str,
     match_id: str,
     distance_km: Optional[float] = None,
+    request_id: Optional[str] = None,
 ) -> str:
     """Render HTML template for single donor match alert."""
     dist_text = f"{distance_km:.1f} km away" if distance_km is not None else "Near your registered location"
-    portal_url = f"{settings.FRONTEND_URL}/donor"
+    portal_url = (
+        f"{settings.FRONTEND_URL}/request/{request_id}"
+        if request_id
+        else f"{settings.FRONTEND_URL}/donor"
+    )
 
     return f"""<!DOCTYPE html>
 <html>
@@ -87,7 +92,7 @@ def _render_emergency_broadcast_html(
     request_id: str,
 ) -> str:
     """Render HTML template for emergency mass broadcast."""
-    portal_url = f"{settings.FRONTEND_URL}/requests"
+    portal_url = f"{settings.FRONTEND_URL}/request/{request_id}"
 
     return f"""<!DOCTYPE html>
 <html>
@@ -209,6 +214,69 @@ def _dispatch_email(
     return True
 
 
+def _render_donor_accepted_html(
+    recipient_name: str,
+    donor_name: str,
+    donor_phone: str,
+    donor_area: str,
+    request_id: str,
+) -> str:
+    """Render HTML template for recipient notification when a donor accepts."""
+    portal_url = f"{settings.FRONTEND_URL}/recipient?tab=requests"
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; color: #1e293b; margin: 0; padding: 20px; }}
+    .container {{ max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 8px; border: 1px solid #10b981; overflow: hidden; box-shadow: 0 4px 10px rgba(16, 185, 129, 0.1); }}
+    .header {{ background-color: #059669; color: #ffffff; padding: 24px; text-align: center; }}
+    .badge {{ display: inline-block; background-color: #d1fae5; color: #065f46; padding: 4px 12px; border-radius: 9999px; font-weight: 700; font-size: 12px; text-transform: uppercase; margin-bottom: 8px; }}
+    .header h1 {{ margin: 0; font-size: 22px; font-weight: 800; }}
+    .body {{ padding: 28px 24px; }}
+    .success-card {{ background-color: #ecfdf5; border-left: 4px solid #10b981; padding: 18px; margin: 20px 0; border-radius: 4px; }}
+    .row {{ margin-bottom: 8px; font-size: 14px; }}
+    .label {{ font-weight: 600; color: #64748b; }}
+    .value {{ font-weight: 700; color: #0f172a; }}
+    .btn {{ display: inline-block; background-color: #059669; color: #ffffff !important; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 700; font-size: 14px; margin-top: 12px; text-align: center; }}
+    .footer {{ padding: 20px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">DONOR CONFIRMED</div>
+      <h1>A Donor Has Accepted Your Request!</h1>
+      <p style="margin: 4px 0 0 0; opacity: 0.95;">Direct contact information is now unlocked</p>
+    </div>
+    <div class="body">
+      <p>Hello <strong>{recipient_name}</strong>,</p>
+      <p>Great news! A volunteer donor has stepped forward to fulfill your blood request.</p>
+      
+      <div class="success-card">
+        <div class="row"><span class="label">Donor Name:</span> <span class="value">{donor_name}</span></div>
+        <div class="row"><span class="label">Direct Contact Phone:</span> <span class="value" style="color: #059669; font-size: 16px;">{donor_phone}</span></div>
+        <div class="row"><span class="label">Donor Area:</span> <span class="value">{donor_area}</span></div>
+        <div class="row"><span class="label">Request ID:</span> <span class="value" style="font-family: monospace; font-size: 12px;">{request_id}</span></div>
+      </div>
+
+      <p>Please call the donor immediately to confirm their arrival time and coordinate the transfusion.</p>
+      
+      <div style="text-align: center;">
+        <a href="tel:{donor_phone}" class="btn" style="margin-right: 8px;">Call Donor Now</a>
+        <a href="{portal_url}" class="btn" style="background-color: #1e293b;">View in Portal</a>
+      </div>
+    </div>
+    <div class="footer">
+      <p>LifeDrop Network • Smart Blood Donation Management System</p>
+      <p>Thank you for using LifeDrop. Please update the request status to COMPLETED once the donation is concluded.</p>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
 def send_single_donor_match_alert(
     donor_email: str,
     donor_name: str,
@@ -216,6 +284,7 @@ def send_single_donor_match_alert(
     hospital_name: str,
     match_id: str,
     distance_km: Optional[float] = None,
+    request_id: Optional[str] = None,
 ) -> bool:
     """Send personalized notification to a matched candidate donor."""
     if not donor_email:
@@ -224,12 +293,18 @@ def send_single_donor_match_alert(
     dist_str = f" (~{distance_km:.1f} km away)" if distance_km is not None else ""
     subject = "New Blood Request Match — LifeDrop"
 
+    portal_url = (
+        f"{settings.FRONTEND_URL}/request/{request_id}"
+        if request_id
+        else f"{settings.FRONTEND_URL}/donor"
+    )
+
     text_content = (
         f"Hello {donor_name},\n\n"
         f"A patient urgently requires blood matching your type ({blood_group}) at {hospital_name}{dist_str}.\n\n"
         f"Match ID: {match_id}\n"
-        f"Your personal contact information remains protected. Please log in to your portal to review and accept/decline:\n"
-        f"{settings.FRONTEND_URL}/donor\n\n"
+        f"Your personal contact information remains protected. Please open the link to review and accept/decline:\n"
+        f"{portal_url}\n\n"
         f"— LifeDrop Network"
     )
 
@@ -239,6 +314,7 @@ def send_single_donor_match_alert(
         hospital_name=hospital_name,
         match_id=match_id,
         distance_km=distance_km,
+        request_id=request_id,
     )
 
     return _dispatch_email(
@@ -269,8 +345,8 @@ def send_emergency_broadcast_alert(
         f"Hospital / Center: {hospital_name}\n"
         f"Units Required: {units_needed}\n"
         f"Request ID: {request_id}\n\n"
-        f"If you are healthy and available to donate, please log in immediately:\n"
-        f"{settings.FRONTEND_URL}/requests\n\n"
+        f"If you are healthy and available to donate, please view and accept the request immediately:\n"
+        f"{settings.FRONTEND_URL}/request/{request_id}\n\n"
         f"— LifeDrop Emergency Dispatch Network"
     )
 
@@ -296,4 +372,49 @@ def send_emergency_broadcast_alert(
             sent_count += 1
 
     return sent_count
+
+
+def send_donor_accepted_alert(
+    recipient_email: str,
+    recipient_name: str,
+    donor_name: str,
+    donor_phone: str,
+    donor_area: str,
+    request_id: str,
+) -> bool:
+    """Send immediate notification to the recipient when a donor accepts their request."""
+    if not recipient_email:
+        return False
+
+    subject = "Donor Accepted Your Blood Request! — LifeDrop"
+
+    text_content = (
+        f"Hello {recipient_name},\n\n"
+        f"A donor has accepted your blood request!\n\n"
+        f"Donor Name: {donor_name}\n"
+        f"Donor Phone: {donor_phone}\n"
+        f"Donor Area: {donor_area}\n"
+        f"Request ID: {request_id}\n\n"
+        f"Please call the donor immediately to coordinate: {donor_phone}\n\n"
+        f"You can also manage this request in your dashboard:\n"
+        f"{settings.FRONTEND_URL}/recipient?tab=requests\n\n"
+        f"— LifeDrop Network"
+    )
+
+    html_content = _render_donor_accepted_html(
+        recipient_name=recipient_name,
+        donor_name=donor_name,
+        donor_phone=donor_phone,
+        donor_area=donor_area,
+        request_id=request_id,
+    )
+
+    return _dispatch_email(
+        to_email=recipient_email,
+        subject=subject,
+        text_content=text_content,
+        html_content=html_content,
+        is_emergency=True,
+    )
+
 

@@ -59,6 +59,16 @@ class MaskedDonorMatchResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AcceptedDonorSummary(BaseModel):
+    donor_id: UUID
+    full_name: str
+    phone: str
+    area_zone: Optional[str] = None
+    email: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class BloodRequestResponse(BaseModel):
     request_id: UUID
     recipient_id: UUID
@@ -78,6 +88,7 @@ class BloodRequestResponse(BaseModel):
     attendant_phone_number: Optional[str] = None
     volume_ml: Optional[float] = None
     accepted_donor_id: Optional[UUID] = None
+    accepted_donor: Optional[AcceptedDonorSummary] = None
     matches: Optional[List[MaskedDonorMatchResponse]] = None
 
     model_config = ConfigDict(from_attributes=True)

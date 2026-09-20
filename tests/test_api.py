@@ -685,4 +685,166 @@ def test_blood_request_phase3_fields_and_privacy_masking():
     assert comp_res.json()["status"] == "COMPLETED"
 
 
+def test_phase4_emergency_landing_accept_and_unmasking(monkeypatch):
+    """Test Phase 4:
+    1. Unauthenticated public access to /api/v1/requests/{id} with masked attendant phone.
+    2. Donor acceptance via POST /api/v1/requests/{id}/accept with eligibility validation.
+    3. Instant unmasking of attendant contact phone for accepted donor.
+    4. Recipient access to accepted donor's name, phone, and area zone.
+    5. Prevention of double acceptance and self-acceptance.
+    6. send_donor_accepted_alert email dispatch.
+    """
+    monkeypatch.setattr("app.services.email_service._dispatch_email", lambda *args, **kwargs: True)
+    from app.services.email_service import send_donor_accepted_alert
+
+    # 1. Create Recipient User and a Blood Request
+    uid_r = uuid.uuid4().hex[:8]
+    email_r = f"recip_{uid_r}@example.com"
+    reg_r = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Emergency Recipient",
+            "email": email_r,
+            "phone": "+8801811223344",
+            "password": "Password123!",
+            "role": "RECIPIENT",
+            "blood_group": "A_POSITIVE",
+            "address": "Dhanmondi, Dhaka",
+        },
+    )
+    assert reg_r.status_code == 201
+    token_r = client.post(
+        "/api/v1/auth/login",
+        json={"email": email_r, "password": "Password123!"},
+    ).json()["access_token"]
+    headers_r = {"Authorization": f"Bearer {token_r}"}
+
+    create_res = client.post(
+        "/api/v1/requests/",
+        headers=headers_r,
+        json={
+            "blood_group": "A_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 2.0,
+            "volume_ml": 900.0,
+            "urgency": "EMERGENCY",
+            "patient_name": "Critical Patient X",
+            "hospital_name": "Square Hospital, Dhaka",
+            "area_zone": "West Dhanmondi",
+            "attendant_phone_number": "+8801999888777",
+            "required_location": "Square Hospital, Panthapath, Dhaka",
+            "latitude": 23.7533,
+            "longitude": 90.3837,
+            "notes": "Emergency ICU transfusion",
+        },
+    )
+    assert create_res.status_code == 201
+    req_id = create_res.json()["request_id"]
+
+    # 2. Public Unauthenticated Landing View
+    public_res = client.get(f"/api/v1/requests/{req_id}")
+    assert public_res.status_code == 200
+    pub_data = public_res.json()
+    assert pub_data["hospital_name"] == "Square Hospital, Dhaka"
+    assert pub_data["status"] == "OPEN"
+    # Attendant phone MUST be masked for public viewer
+    assert pub_data["attendant_phone_number"] != "+8801999888777"
+    assert "*" in pub_data["attendant_phone_number"]
+
+    # 3. Create Volunteer Donor B
+    uid_d = uuid.uuid4().hex[:8]
+    email_d = f"donor_{uid_d}@example.com"
+    reg_d = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Volunteer Donor Farhan",
+            "email": email_d,
+            "phone": "+8801777665544",
+            "password": "Password123!",
+            "role": "DONOR",
+            "blood_group": "A_POSITIVE",
+            "address": "Banani, Dhaka",
+        },
+    )
+    assert reg_d.status_code == 201
+    donor_d_id = reg_d.json()["user_id"]
+    token_d = client.post(
+        "/api/v1/auth/login",
+        json={"email": email_d, "password": "Password123!"},
+    ).json()["access_token"]
+    headers_d = {"Authorization": f"Bearer {token_d}"}
+
+    # Set Donor Medical Info so they pass eligibility check (Hb >= 12.5)
+    med_res = client.post(
+        "/api/v1/donors/medical-info",
+        headers=headers_d,
+        json={
+            "hemoglobin_level": 14.5,
+            "allergies": "None",
+            "chronic_diseases": "None",
+        },
+    )
+    assert med_res.status_code == 200
+
+    # 4. Self-Acceptance Safeguard: Recipient cannot accept their own request
+    self_accept = client.post(f"/api/v1/requests/{req_id}/accept", headers=headers_r)
+    assert self_accept.status_code == 400
+    assert "cannot accept your own" in self_accept.json()["detail"].lower()
+
+    # 5. Donor Accepts the Request: POST /api/v1/requests/{req_id}/accept
+    accept_res = client.post(f"/api/v1/requests/{req_id}/accept", headers=headers_d)
+    assert accept_res.status_code == 200
+    accepted_data = accept_res.json()
+    assert accepted_data["status"] == "ACCEPTED"
+    assert accepted_data["accepted_donor_id"] == donor_d_id
+    # Unmasked phone revealed to accepted donor!
+    assert accepted_data["attendant_phone_number"] == "+8801999888777"
+
+    # 6. Recipient Checks Request: Sees Accepted Status and Donor Contact
+    recip_view = client.get(f"/api/v1/requests/{req_id}", headers=headers_r)
+    assert recip_view.status_code == 200
+    recip_data = recip_view.json()
+    assert recip_data["status"] == "ACCEPTED"
+    assert recip_data["accepted_donor"] is not None
+    assert recip_data["accepted_donor"]["full_name"] == "Volunteer Donor Farhan"
+    assert recip_data["accepted_donor"]["phone"] == "+8801777665544"
+
+    # 7. Another Donor C cannot accept an already accepted request
+    uid_c = uuid.uuid4().hex[:8]
+    email_c = f"donor_{uid_c}@example.com"
+    reg_c = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Late Donor",
+            "email": email_c,
+            "phone": "+8801666554433",
+            "password": "Password123!",
+            "role": "DONOR",
+            "blood_group": "A_POSITIVE",
+            "address": "Uttara, Dhaka",
+        },
+    )
+    assert reg_c.status_code == 201
+    token_c = client.post(
+        "/api/v1/auth/login",
+        json={"email": email_c, "password": "Password123!"},
+    ).json()["access_token"]
+    headers_c = {"Authorization": f"Bearer {token_c}"}
+    late_accept = client.post(f"/api/v1/requests/{req_id}/accept", headers=headers_c)
+    assert late_accept.status_code == 400
+    assert "already been accepted" in late_accept.json()["detail"].lower()
+
+    # 8. Test transactional donor accepted email helper
+    alert_sent = send_donor_accepted_alert(
+        recipient_email=email_r,
+        recipient_name="Emergency Recipient",
+        donor_name="Volunteer Donor Farhan",
+        donor_phone="+8801777665544",
+        donor_area="Banani, Dhaka",
+        request_id=req_id,
+    )
+    assert alert_sent is True
+
+
+
 
