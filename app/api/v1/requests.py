@@ -22,6 +22,7 @@ from app.schemas.request import (
     AcceptedDonorSummary,
     MaskedDonorMatchResponse,
     RequestStatusUpdate,
+    RequestReopenPayload,
     mask_phone_number,
 )
 from app.api.deps import get_current_active_user, get_current_user_optional, RequireRoles
@@ -33,6 +34,7 @@ from app.services.email_service import (
     send_emergency_broadcast_alert,
     send_donor_accepted_alert,
     send_donation_completed_thank_you_alert,
+    send_match_cancelled_reopened_alert,
 )
 from app.api.v1.donors import get_or_create_donor
 
@@ -592,6 +594,183 @@ def complete_blood_request(
     log_system_action(
         db=db,
         action="COMPLETE_BLOOD_REQUEST",
+        entity="blood_requests",
+        entity_id=req.request_id,
+        user_id=current_user.user_id,
+    )
+
+    db.commit()
+    db.refresh(req)
+    return format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=is_admin)
+
+
+@router.post("/{request_id}/reopen", response_model=BloodRequestResponse)
+def reopen_blood_request(
+    request_id: UUID,
+    background_tasks: BackgroundTasks,
+    payload: Optional[RequestReopenPayload] = None,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Cancel an active match and re-open blood request search (Doc Section 9).
+    
+    Rules:
+    - Allowed by: Request creator (recipient), currently accepted donor, or admin.
+    - Status check: Request must be in ACCEPTED, PROCESSING, or CANCELLED status.
+    - Completion check: Cannot re-open an already COMPLETED request.
+    - Zero penalty: Previous donor is NOT penalized (no cooldown, no donation history).
+    - Status revert: Request reverts to OPEN, accepted_donor_id = None.
+    - Restart search: Matching engine re-runs and alerts candidate donors.
+    """
+    req = (
+        db.query(BloodRequest)
+        .options(
+            joinedload(BloodRequest.accepted_donor).joinedload(User.donor),
+            joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user),
+            joinedload(BloodRequest.recipient).joinedload(Recipient.user),
+        )
+        .filter(BloodRequest.request_id == request_id)
+        .first()
+    )
+    if not req:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Blood request not found.",
+        )
+
+    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
+    is_owner = (req.recipient_id == current_user.user_id)
+    is_accepted_donor = (req.accepted_donor_id == current_user.user_id)
+
+    if not (is_admin or is_owner or is_accepted_donor):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to cancel this match or re-open the blood request.",
+        )
+
+    if req.status == RequestStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot re-open a completed blood request where donation transfusion has already taken place.",
+        )
+
+    if req.status == RequestStatus.OPEN and not req.accepted_donor_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Blood request is already open and currently searching for donors.",
+        )
+
+    # 1. Capture released donor and parties for notifications
+    released_donor_user = req.accepted_donor
+    released_donor = released_donor_user.donor if released_donor_user and released_donor_user.donor else None
+    released_donor_name = released_donor_user.full_name if released_donor_user else "Volunteer Donor"
+
+    cancelled_by_label = (
+        "donor" if is_accepted_donor
+        else "recipient" if is_owner
+        else "administrator"
+    )
+
+    reason = payload.reason if payload and payload.reason else None
+
+    # 2. Reset match for released donor to DECLINED
+    if req.accepted_donor_id:
+        for match in req.matches:
+            if match.donor_id == req.accepted_donor_id:
+                match.response_status = MatchResponseStatus.DECLINED
+
+    # 3. Ensure released donor remains AVAILABLE and has ZERO cooldown penalty
+    if released_donor:
+        released_donor.availability_status = AvailabilityStatus.AVAILABLE
+
+    # 4. Revert request status to OPEN and clear accepted_donor_id
+    req.status = RequestStatus.OPEN
+    req.accepted_donor_id = None
+
+    # 5. Restart matching engine to find alternative compatible donors
+    matches = run_matching_engine(
+        db=db,
+        request=req,
+        is_emergency=(req.urgency == RequestUrgency.EMERGENCY),
+    )
+
+    blood_group_val = (
+        req.blood_group.value
+        if hasattr(req.blood_group, "value")
+        else str(req.blood_group)
+    )
+    display_hospital = req.hospital_name or req.required_location or "Transfusion Center"
+
+    # 6. Dispatch alerts to new candidate donors
+    if matches and background_tasks:
+        if req.urgency == RequestUrgency.EMERGENCY:
+            emergency_emails = [
+                m.donor.user.email
+                for m in matches
+                if m.donor and m.donor.user and m.donor.user.email
+                and (not released_donor or m.donor_id != released_donor.donor_id)
+            ]
+            if emergency_emails:
+                background_tasks.add_task(
+                    send_emergency_broadcast_alert,
+                    donor_emails=emergency_emails,
+                    blood_group=blood_group_val,
+                    hospital_name=display_hospital,
+                    units_needed=float(req.quantity),
+                    request_id=str(req.request_id),
+                )
+        else:
+            for m in matches:
+                if m.donor and m.donor.user and m.donor.user.email:
+                    if released_donor and m.donor_id == released_donor.donor_id:
+                        continue
+                    background_tasks.add_task(
+                        send_single_donor_match_alert,
+                        donor_email=m.donor.user.email,
+                        donor_name=m.donor.user.full_name or "Valued Donor",
+                        blood_group=blood_group_val,
+                        hospital_name=display_hospital,
+                        match_id=str(m.match_id),
+                        distance_km=float(m.distance_km) if m.distance_km is not None else None,
+                        request_id=str(req.request_id),
+                    )
+
+    # 7. Notify the opposite party of the cancellation
+    recipient_user = req.recipient.user if req.recipient and req.recipient.user else None
+    if not recipient_user:
+        recipient_user = db.query(User).filter(User.user_id == req.recipient_id).first()
+
+    recipient_name = recipient_user.full_name if recipient_user else "Recipient"
+
+    if background_tasks:
+        if is_accepted_donor and recipient_user and recipient_user.email:
+            # Donor cancelled -> notify recipient
+            background_tasks.add_task(
+                send_match_cancelled_reopened_alert,
+                target_email=recipient_user.email,
+                recipient_name=recipient_name,
+                donor_name=released_donor_name,
+                hospital_name=display_hospital,
+                cancelled_by="donor",
+                request_id=str(req.request_id),
+                reason=reason,
+            )
+        elif is_owner and released_donor_user and released_donor_user.email:
+            # Recipient cancelled -> notify donor
+            background_tasks.add_task(
+                send_match_cancelled_reopened_alert,
+                target_email=released_donor_user.email,
+                recipient_name=released_donor_name,
+                donor_name=released_donor_name,
+                hospital_name=display_hospital,
+                cancelled_by="recipient",
+                request_id=str(req.request_id),
+                reason=reason,
+            )
+
+    log_system_action(
+        db=db,
+        action="REOPEN_BLOOD_REQUEST",
         entity="blood_requests",
         entity_id=req.request_id,
         user_id=current_user.user_id,

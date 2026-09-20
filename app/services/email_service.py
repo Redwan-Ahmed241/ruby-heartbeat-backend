@@ -526,3 +526,77 @@ def send_donation_completed_thank_you_alert(
     )
 
 
+def send_match_cancelled_reopened_alert(
+    target_email: str,
+    recipient_name: str,
+    donor_name: str,
+    hospital_name: str,
+    cancelled_by: str,
+    request_id: str,
+    reason: Optional[str] = None,
+) -> bool:
+    """Send cancellation and re-opened search alert when an accepted match is released."""
+    if not target_email:
+        return False
+
+    subject = "Blood Request Match Cancelled & Search Re-Opened — LifeDrop"
+    reason_str = f"\nReason: {reason}" if reason else ""
+
+    text_content = (
+        f"Hello {recipient_name},\n\n"
+        f"The commitment between Donor {donor_name} and request #{request_id[:8].upper()} at {hospital_name} "
+        f"has been cancelled by the {cancelled_by}.{reason_str}\n\n"
+        f"Action taken:\n"
+        f"- The request has been reverted to OPEN status.\n"
+        f"- The Intelligent Matching Engine has restarted search for alternative compatible donors.\n"
+        f"- The donor has not received any penalty or cooldown.\n\n"
+        f"You can monitor live donor responses at:\n"
+        f"{settings.FRONTEND_URL}/request/{request_id}\n\n"
+        f"— LifeDrop Network"
+    )
+
+    reason_html = f"<p style='margin:6px 0 0 0;'><strong>Reason:</strong> {reason}</p>" if reason else ""
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; color: #1e293b; margin: 0; padding: 20px; }}
+    .container {{ max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; }}
+    .header {{ background-color: #d97706; color: #ffffff; padding: 20px; text-align: center; }}
+    .body {{ padding: 24px; }}
+    .notice {{ background-color: #fffbeb; border-left: 4px solid #d97706; padding: 14px; margin: 16px 0; border-radius: 4px; }}
+    .btn {{ display: inline-block; background-color: #d97706; color: #ffffff !important; text-decoration: none; padding: 10px 24px; border-radius: 6px; font-weight: 600; font-size: 14px; margin-top: 14px; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2 style="margin:0;">Match Cancelled • Search Re-Opened</h2>
+    </div>
+    <div class="body">
+      <p>Hello <strong>{recipient_name}</strong>,</p>
+      <div class="notice">
+        <p style="margin:0 0 6px 0;"><strong>Status:</strong> The match with Donor <strong>{donor_name}</strong> has been cancelled by the {cancelled_by}.</p>
+        <p style="margin:0;"><strong>Hospital:</strong> {hospital_name}</p>
+        {reason_html}
+      </div>
+      <p>The request is now <strong>OPEN</strong> again and LifeDrop's matching system has automatically resumed searching for nearby available donors.</p>
+      <div style="text-align: center;">
+        <a href="{settings.FRONTEND_URL}/request/{request_id}" class="btn">View Live Request Status</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>"""
+
+    return _dispatch_email(
+        to_email=target_email,
+        subject=subject,
+        text_content=text_content,
+        html_content=html_content,
+        is_emergency=False,
+    )
+
+
+

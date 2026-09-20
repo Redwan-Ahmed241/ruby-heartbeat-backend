@@ -104,6 +104,11 @@ class RequestStatusUpdate(BaseModel):
     accepted_donor_id: Optional[UUID] = None
 
 
+class RequestReopenPayload(BaseModel):
+    reason: Optional[str] = Field(None, max_length=255)
+
+
+
 class MatchRespondRequest(BaseModel):
     response: MatchResponseStatus  # Must be ACCEPTED or DECLINED
 

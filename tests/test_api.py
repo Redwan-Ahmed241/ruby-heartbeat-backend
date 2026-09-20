@@ -1193,7 +1193,7 @@ def test_phase7_donor_ranking_tiers_and_leaderboard():
     b_id, _ = register_and_add_donations("bron", 1)
 
     # 3. Public GET /api/v1/donors/top endpoint without auth headers
-    top_res = client.get("/api/v1/donors/top?limit=20")
+    top_res = client.get("/api/v1/donors/top?limit=100")
     assert top_res.status_code == 200
     top_donors = top_res.json()
     assert len(top_donors) >= 4
@@ -1243,6 +1243,155 @@ def test_phase7_donor_ranking_tiers_and_leaderboard():
         next(i for i, d in enumerate(top_donors) if d["donor_id"] == b_id),
     ]
     assert indices == sorted(indices), f"Expected strict rank ordering (Diamond < Plat < Silv < Bron), got {indices}"
+
+
+def test_phase8_cancel_and_reopen_request_flow():
+    """Phase 8: Test cancelling match after acceptance and re-opening request (Doc §9)."""
+    suffix = uuid.uuid4().hex[:6]
+
+    def register_user(role: str, email_prefix: str):
+        email = f"{email_prefix}_{suffix}@test.com"
+        reg_res = client.post(
+            "/api/v1/auth/register",
+            json={
+                "full_name": f"User {email_prefix.title()}",
+                "email": email,
+                "phone": f"+88017{suffix.ljust(8, '1')[:8]}",
+                "password": "Password123!",
+                "role": role,
+                "donor_profile": {
+                    "blood_group": "O_POSITIVE",
+                    "date_of_birth": "1996-03-20",
+                    "gender": "Male",
+                    "weight": 70.0,
+                    "address": "Dhanmondi, Dhaka",
+                    "latitude": 23.7465,
+                    "longitude": 90.3760,
+                    "hemoglobin_level": 14.2,
+                },
+                "recipient_profile": {
+                    "nid_passport_no": "199482736152",
+                    "address": "Dhanmondi, Dhaka",
+                    "relationship_to_patient": "Self",
+                    "patient_name": "Test Patient",
+                },
+            },
+        )
+        assert reg_res.status_code == 201
+        u_id = reg_res.json()["user_id"]
+
+        login_res = client.post(
+            "/api/v1/auth/login",
+            json={"email": email, "password": "Password123!"},
+        )
+        assert login_res.status_code == 200
+        return u_id, {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+
+    # 1. Register Recipient, Donor 1, Donor 2, and Bystander
+    rec_id, headers_rec = register_user("RECIPIENT", "recip_p8")
+    d1_id, headers_d1 = register_user("DONOR", "donor1_p8")
+    d2_id, headers_d2 = register_user("DONOR", "donor2_p8")
+    _, headers_bystander = register_user("DONOR", "bystander_p8")
+
+    # 2. Recipient creates an urgent blood request
+    req_res = client.post(
+        "/api/v1/requests/",
+        headers=headers_rec,
+        json={
+            "blood_group": "O_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 1.0,
+            "urgency": "URGENT",
+            "required_location": "Square Hospital, Panthapath, Dhaka",
+            "latitude": 23.7533,
+            "longitude": 90.3817,
+            "notes": "Surgery scheduled tomorrow morning",
+        },
+    )
+    assert req_res.status_code == 201
+    req_id = req_res.json()["request_id"]
+    assert req_res.json()["status"] == "OPEN"
+
+    # 3. Donor 1 accepts the request
+    accept_res = client.post(f"/api/v1/requests/{req_id}/accept", headers=headers_d1)
+    assert accept_res.status_code == 200
+    accept_data = accept_res.json()
+    assert accept_data["status"] == "ACCEPTED"
+    assert accept_data["accepted_donor_id"] == d1_id
+
+    # 4. Unauthorized third party tries to re-open the request -> 403 Forbidden
+    unauth_reopen = client.post(f"/api/v1/requests/{req_id}/reopen", headers=headers_bystander)
+    assert unauth_reopen.status_code == 403
+
+    # 5. Donor 1 cancels their match and re-opens the request (Doc §9)
+    reopen_res = client.post(
+        f"/api/v1/requests/{req_id}/reopen",
+        headers=headers_d1,
+        json={"reason": "Sudden transportation breakdown"},
+    )
+    assert reopen_res.status_code == 200
+    reopen_data = reopen_res.json()
+    assert reopen_data["status"] == "OPEN"
+    assert reopen_data["accepted_donor_id"] is None
+    assert reopen_data["accepted_donor"] is None
+
+    # 6. Verify Donor 1 is NOT penalized: Zero cooldown, no fake history
+    d1_elig = client.get("/api/v1/donors/eligibility", headers=headers_d1)
+    assert d1_elig.status_code == 200
+    assert d1_elig.json()["is_eligible"] is True
+    assert d1_elig.json()["cooldown_active"] is False
+
+    d1_history = client.get("/api/v1/donors/history", headers=headers_d1)
+    assert d1_history.status_code == 200
+    assert len(d1_history.json()) == 0
+
+    d1_prof = client.get("/api/v1/donors/profile", headers=headers_d1)
+    assert d1_prof.status_code == 200
+    assert d1_prof.json()["availability_status"] == "AVAILABLE"
+    assert d1_prof.json()["last_donation_date"] is None
+
+    # 7. Donor 2 now accepts the re-opened request
+    d2_accept = client.post(f"/api/v1/requests/{req_id}/accept", headers=headers_d2)
+    assert d2_accept.status_code == 200
+    assert d2_accept.json()["status"] == "ACCEPTED"
+    assert d2_accept.json()["accepted_donor_id"] == d2_id
+
+    # 8. Recipient cancels the match and re-opens search
+    rec_reopen = client.post(
+        f"/api/v1/requests/{req_id}/reopen",
+        headers=headers_rec,
+        json={"reason": "Schedule rescheduled by doctor"},
+    )
+    assert rec_reopen.status_code == 200
+    rec_reopen_data = rec_reopen.json()
+    assert rec_reopen_data["status"] == "OPEN"
+    assert rec_reopen_data["accepted_donor_id"] is None
+
+    # Verify Donor 2 is also NOT penalized
+    d2_elig = client.get("/api/v1/donors/eligibility", headers=headers_d2)
+    assert d2_elig.status_code == 200
+    assert d2_elig.json()["is_eligible"] is True
+    assert d2_elig.json()["cooldown_active"] is False
+
+    # 9. Edge cases:
+    # Cannot complete an unassigned OPEN request
+    fail_complete = client.post(f"/api/v1/requests/{req_id}/complete", headers=headers_rec)
+    assert fail_complete.status_code == 400
+
+    # Cannot re-open an already OPEN request with no match
+    already_open = client.post(f"/api/v1/requests/{req_id}/reopen", headers=headers_rec)
+    assert already_open.status_code == 400
+
+    # Donor 1 accepts again, Recipient confirms completed donation
+    client.post(f"/api/v1/requests/{req_id}/accept", headers=headers_d1)
+    comp_res = client.post(f"/api/v1/requests/{req_id}/complete", headers=headers_rec)
+    assert comp_res.status_code == 200
+    assert comp_res.json()["status"] == "COMPLETED"
+
+    # Cannot re-open an already COMPLETED request
+    reopen_completed = client.post(f"/api/v1/requests/{req_id}/reopen", headers=headers_rec)
+    assert reopen_completed.status_code == 400
+
 
 
 

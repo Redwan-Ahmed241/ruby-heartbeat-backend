@@ -221,7 +221,7 @@ def record_donation_history(
 
 @router.get("/top", response_model=List[TopDonorResponse])
 def get_top_donors(
-    limit: int = Query(10, ge=1, le=50),
+    limit: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
     """Public leaderboard endpoint returning top ranked donors.
