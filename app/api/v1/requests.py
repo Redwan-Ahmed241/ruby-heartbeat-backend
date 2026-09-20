@@ -39,10 +39,17 @@ router = APIRouter(prefix="/requests", tags=["Blood Requests"])
 def build_masked_match_response(match: DonorMatch) -> MaskedDonorMatchResponse:
     """Build MaskedDonorMatchResponse satisfying the Contact Reveal Safeguard.
     Personal phone, address, and email are NEVER exposed here.
+    Coordinates are rounded to 2 decimal places (~1.1 km area grid) to protect donor residential privacy.
     """
-    donor_user = match.donor.user if match.donor else None
+    donor = match.donor
+    donor_user = donor.user if donor else None
     first_letter = donor_user.full_name[0].upper() if donor_user and donor_user.full_name else "D"
     masked_name = f"Donor {first_letter}***"
+
+    # Privacy rounding for map visualization (~1km accuracy)
+    approx_lat = round(float(donor.latitude), 2) if (donor and donor.latitude is not None) else None
+    approx_lng = round(float(donor.longitude), 2) if (donor and donor.longitude is not None) else None
+    approx_area = donor.address if (donor and donor.address) else None
 
     return MaskedDonorMatchResponse(
         match_id=match.match_id,
@@ -56,6 +63,9 @@ def build_masked_match_response(match: DonorMatch) -> MaskedDonorMatchResponse:
         start_date=match.start_date,
         donor_name_initial=masked_name,
         contact_revealed=(match.response_status == MatchResponseStatus.ACCEPTED),
+        approx_latitude=approx_lat,
+        approx_longitude=approx_lng,
+        approx_area=approx_area,
     )
 
 

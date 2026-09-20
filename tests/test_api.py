@@ -30,6 +30,12 @@ from app.services.email_service import (
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def mock_external_email_dispatcher(monkeypatch):
+    """Safely mock external Resend/SMTP network calls during test runs."""
+    monkeypatch.setattr("app.services.email_service._dispatch_email", lambda *args, **kwargs: True)
+
+
 def test_health_check():
     """Verify health endpoint."""
     response = client.get("/health")
@@ -844,6 +850,126 @@ def test_phase4_emergency_landing_accept_and_unmasking(monkeypatch):
         request_id=req_id,
     )
     assert alert_sent is True
+
+
+def test_phase5_approximate_coordinate_serialization_and_map_safeguard(monkeypatch):
+    """Test Phase 5:
+    1. Donor coordinates are serialized with ~1km privacy rounding (2 decimal places) on match cards.
+    2. Exact residential coordinates are protected and not leaked in masked match cards.
+    3. Request coordinates strictly reflect hospital/center location.
+    """
+    monkeypatch.setattr("app.services.email_service._dispatch_email", lambda *args, **kwargs: True)
+
+    # 1. Register donor with high-precision exact coordinates
+    uid_d = uuid.uuid4().hex[:8]
+    email_d = f"donor_p5_{uid_d}@example.com"
+    exact_lat = 23.792841
+    exact_lng = 90.407819
+    reg_d = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "High Precision Donor",
+            "email": email_d,
+            "phone": "+8801711224466",
+            "password": "Password123!",
+            "role": "DONOR",
+            "blood_group": "AB_POSITIVE",
+            "address": "Road 11, Block D, Banani, Dhaka",
+        },
+    )
+    assert reg_d.status_code == 201
+    token_d = client.post(
+        "/api/v1/auth/login",
+        json={"email": email_d, "password": "Password123!"},
+    ).json()["access_token"]
+    headers_d = {"Authorization": f"Bearer {token_d}"}
+
+    # Update donor profile with high-precision coordinates
+    upd_res = client.put(
+        "/api/v1/donors/profile",
+        headers=headers_d,
+        json={
+            "latitude": exact_lat,
+            "longitude": exact_lng,
+            "address": "Banani, Dhaka",
+            "weight": 70.0,
+        },
+    )
+    assert upd_res.status_code == 200
+
+    # Ensure donor has medical info for eligibility
+    client.post(
+        "/api/v1/donors/medical-info",
+        headers=headers_d,
+        json={"hemoglobin_level": 14.0},
+    )
+
+    # 2. Register recipient and create a request at a specific hospital
+    uid_r = uuid.uuid4().hex[:8]
+    email_r = f"recip_p5_{uid_r}@example.com"
+    reg_r = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Hospital Recipient",
+            "email": email_r,
+            "phone": "+8801811335577",
+            "password": "Password123!",
+            "role": "RECIPIENT",
+            "blood_group": "AB_POSITIVE",
+            "address": "Home Address in Old Dhaka (Private)",
+        },
+    )
+    assert reg_r.status_code == 201
+    token_r = client.post(
+        "/api/v1/auth/login",
+        json={"email": email_r, "password": "Password123!"},
+    ).json()["access_token"]
+    headers_r = {"Authorization": f"Bearer {token_r}"}
+
+    hospital_lat = 23.753312
+    hospital_lng = 90.383745
+    req_res = client.post(
+        "/api/v1/requests/",
+        headers=headers_r,
+        json={
+            "blood_group": "AB_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 1.0,
+            "urgency": "NORMAL",
+            "hospital_name": "Square Hospital",
+            "area_zone": "Panthapath",
+            "attendant_phone_number": "+8801700112233",
+            "required_location": "Square Hospital, Panthapath, Dhaka",
+            "latitude": hospital_lat,
+            "longitude": hospital_lng,
+        },
+    )
+    assert req_res.status_code == 201
+    req_data = req_res.json()
+    req_id = req_data["request_id"]
+
+    # Request coordinates strictly reflect the hospital
+    assert req_data["latitude"] == hospital_lat
+    assert req_data["longitude"] == hospital_lng
+    assert "Square Hospital" in req_data["required_location"]
+
+    # 3. Query matched donors
+    matches_res = client.get(f"/api/v1/requests/{req_id}/matches", headers=headers_r)
+    assert matches_res.status_code == 200
+    matches = matches_res.json()
+    assert len(matches) >= 1
+
+    # Find the newly created high-precision donor match
+    target_match = next((m for m in matches if m["donor_id"] == reg_d.json()["user_id"]), None)
+    assert target_match is not None
+
+    # Verification: Coordinates must be rounded to 2 decimal places (~1.1km accuracy)
+    assert target_match["approx_latitude"] == 23.79
+    assert target_match["approx_longitude"] == 90.41
+    # Exact coordinates MUST NOT be exposed in the masked match card
+    assert target_match["approx_latitude"] != exact_lat
+    assert target_match["approx_longitude"] != exact_lng
+
 
 
 

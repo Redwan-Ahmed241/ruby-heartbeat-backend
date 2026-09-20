@@ -56,6 +56,11 @@ class MaskedDonorMatchResponse(BaseModel):
     donor_name_initial: str
     contact_revealed: bool = False
 
+    # Approximate location for map visualization (~1km privacy grid)
+    approx_latitude: Optional[float] = None
+    approx_longitude: Optional[float] = None
+    approx_area: Optional[str] = None
+
     model_config = ConfigDict(from_attributes=True)
 
 
