@@ -72,6 +72,9 @@ class EligibilityCheckResponse(BaseModel):
     hemoglobin_level: Optional[float] = None
     days_since_last_donation: Optional[int] = None
     last_donation_date: Optional[date] = None
+    cooldown_active: bool = False
+    next_eligible_date: Optional[date] = None
+    cooldown_days_remaining: Optional[int] = None
 
 
 class DonorResponse(BaseModel):

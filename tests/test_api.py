@@ -971,6 +971,153 @@ def test_phase5_approximate_coordinate_serialization_and_map_safeguard(monkeypat
     assert target_match["approx_longitude"] != exact_lng
 
 
+def test_phase6_post_donation_completion_history_and_cooldown():
+    """Test Phase 6: Post-donation resolution, automated history logging,
+    90-day recovery cooldown activation, and non-occurrence safeguards.
+    """
+    uid_r = uuid.uuid4().hex[:8]
+    email_r = f"recip_p6_{uid_r}@example.com"
+    reg_r = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Recipient Phase Six",
+            "email": email_r,
+            "phone": "+8801755667788",
+            "password": "Password123!",
+            "role": "RECIPIENT",
+            "blood_group": "O_POSITIVE",
+            "address": "Dhanmondi, Dhaka",
+        },
+    )
+    assert reg_r.status_code == 201
+    token_r = client.post(
+        "/api/v1/auth/login",
+        json={"email": email_r, "password": "Password123!"},
+    ).json()["access_token"]
+    headers_r = {"Authorization": f"Bearer {token_r}"}
+
+    uid_d = uuid.uuid4().hex[:8]
+    email_d = f"donor_p6_{uid_d}@example.com"
+    reg_d = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Hero Donor Six",
+            "email": email_d,
+            "phone": "+8801877889900",
+            "password": "Password123!",
+            "role": "DONOR",
+            "blood_group": "O_POSITIVE",
+            "address": "Kalabagan, Dhaka",
+        },
+    )
+    assert reg_d.status_code == 201
+    donor_user_id = reg_d.json()["user_id"]
+    token_d = client.post(
+        "/api/v1/auth/login",
+        json={"email": email_d, "password": "Password123!"},
+    ).json()["access_token"]
+    headers_d = {"Authorization": f"Bearer {token_d}"}
+
+    # Set donor medical info (14.2 g/dL Hb)
+    client.post(
+        "/api/v1/donors/medical-info",
+        headers=headers_d,
+        json={"hemoglobin_level": 14.2},
+    )
+
+    # 1. Initial donor eligibility check -> Must be eligible, no cooldown
+    init_elig = client.get("/api/v1/donors/eligibility", headers=headers_d)
+    assert init_elig.status_code == 200
+    init_elig_data = init_elig.json()
+    assert init_elig_data["is_eligible"] is True
+    assert init_elig_data["cooldown_active"] is False
+
+    # 2. Recipient creates blood request
+    req_res = client.post(
+        "/api/v1/requests/",
+        headers=headers_r,
+        json={
+            "blood_group": "O_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 2.0,
+            "urgency": "NORMAL",
+            "hospital_name": "Anwer Khan Modern Hospital",
+            "area_zone": "Dhanmondi",
+            "attendant_phone_number": "+8801755667788",
+            "required_location": "Anwer Khan Modern Hospital, Dhanmondi",
+            "latitude": 23.7500,
+            "longitude": 90.3800,
+        },
+    )
+    assert req_res.status_code == 201
+    req_id = req_res.json()["request_id"]
+
+    # 3. Donor accepts the request
+    accept_res = client.post(f"/api/v1/requests/{req_id}/accept", headers=headers_d)
+    assert accept_res.status_code == 200
+    assert accept_res.json()["status"] == "ACCEPTED"
+    assert accept_res.json()["accepted_donor_id"] == donor_user_id
+
+    # 4. Unauthorized third party tries to complete -> 403 Forbidden
+    uid_other = uuid.uuid4().hex[:8]
+    email_other = f"other_{uid_other}@example.com"
+    client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Other User",
+            "email": email_other,
+            "phone": "+8801900000000",
+            "password": "Password123!",
+        },
+    )
+    token_other = client.post(
+        "/api/v1/auth/login",
+        json={"email": email_other, "password": "Password123!"},
+    ).json()["access_token"]
+    headers_other = {"Authorization": f"Bearer {token_other}"}
+
+    fail_complete = client.post(f"/api/v1/requests/{req_id}/complete", headers=headers_other)
+    assert fail_complete.status_code == 403
+
+    # 5. Request owner (recipient) confirms donation completion
+    complete_res = client.post(f"/api/v1/requests/{req_id}/complete", headers=headers_r)
+    assert complete_res.status_code == 200
+    complete_data = complete_res.json()
+    assert complete_data["status"] == "COMPLETED"
+
+    # 6. Verify Donor's updated profile and status
+    donor_prof = client.get("/api/v1/donors/profile", headers=headers_d)
+    assert donor_prof.status_code == 200
+    prof_data = donor_prof.json()
+    assert prof_data["last_donation_date"] == str(date.today())
+    assert prof_data["availability_status"] == "UNAVAILABLE"
+
+    # 7. Verify Donor's updated clinical eligibility -> Cooldown Active!
+    post_elig = client.get("/api/v1/donors/eligibility", headers=headers_d)
+    assert post_elig.status_code == 200
+    elig_data = post_elig.json()
+    assert elig_data["is_eligible"] is False
+    assert elig_data["cooldown_active"] is True
+    assert elig_data["cooldown_days_remaining"] == 90
+    expected_next = (date.today() + timedelta(days=90)).strftime("%Y-%m-%d")
+    assert elig_data["next_eligible_date"] == expected_next
+
+    # 8. Verify Donation History was automatically written
+    history_res = client.get("/api/v1/donors/history", headers=headers_d)
+    assert history_res.status_code == 200
+    history_list = history_res.json()
+    assert len(history_list) >= 1
+    latest_entry = history_list[0]
+    assert latest_entry["component_type"] == "WHOLE_BLOOD"
+    assert latest_entry["quantity"] == 2.0
+    assert latest_entry["center_name"] == "Anwer Khan Modern Hospital"
+    assert latest_entry["donation_date"] == str(date.today())
+
+    # 9. Cannot complete an already completed request
+    double_complete = client.post(f"/api/v1/requests/{req_id}/complete", headers=headers_r)
+    assert double_complete.status_code == 400
+
+
 
 
 

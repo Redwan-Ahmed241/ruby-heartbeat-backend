@@ -62,6 +62,15 @@ def get_or_create_donor(db: Session, current_user: User) -> Donor:
     return donor
 
 
+@router.get("/profile", response_model=DonorResponse)
+def get_donor_profile(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve donor profile, clinical parameters, coordinates, and availability status."""
+    return get_or_create_donor(db, current_user)
+
+
 @router.put("/profile", response_model=DonorResponse)
 def update_donor_profile(
     profile_data: DonorProfileUpdate,
@@ -128,6 +137,9 @@ def get_eligibility(
         hemoglobin_level=metrics.get("hemoglobin_level"),
         days_since_last_donation=metrics.get("days_since_last_donation"),
         last_donation_date=metrics.get("last_donation_date"),
+        cooldown_active=metrics.get("cooldown_active", False),
+        next_eligible_date=metrics.get("next_eligible_date"),
+        cooldown_days_remaining=metrics.get("cooldown_days_remaining"),
     )
 
 

@@ -8,7 +8,7 @@ Rules:
   - WHOLE_BLOOD: at least 90 days.
   - PLATELETS / PLASMA: at least 14 days.
 """
-from datetime import date
+from datetime import date, timedelta
 from typing import List, Tuple, Optional
 from app.models.user import Donor
 from app.core.enums import ComponentType
@@ -54,14 +54,24 @@ def check_donor_eligibility(
 
     # 4. Recovery / Cooldown period check
     days_since_donation = None
+    cooldown_active = False
+    next_eligible_date = None
+    cooldown_days_remaining = None
+
     if donor.last_donation_date:
         days_since_donation = (today - donor.last_donation_date).days
         min_days = 90 if target_component == ComponentType.WHOLE_BLOOD else 14
+        next_eligible_date = donor.last_donation_date + timedelta(days=min_days)
         if days_since_donation < min_days:
+            cooldown_active = True
+            cooldown_days_remaining = min_days - days_since_donation
             rejections.append(
                 f"Donor is in recovery cooldown ({days_since_donation} days since last donation; "
-                f"minimum required for {target_component.value} is {min_days} days)."
+                f"minimum required for {target_component.value} is {min_days} days). "
+                f"Next eligible donation date: {next_eligible_date.strftime('%Y-%m-%d')}."
             )
+        else:
+            cooldown_days_remaining = 0
 
     is_eligible = len(rejections) == 0
 
@@ -71,6 +81,9 @@ def check_donor_eligibility(
         "hemoglobin_level": hb_level,
         "days_since_last_donation": days_since_donation,
         "last_donation_date": donor.last_donation_date,
+        "cooldown_active": cooldown_active,
+        "next_eligible_date": next_eligible_date,
+        "cooldown_days_remaining": cooldown_days_remaining,
     }
 
     return is_eligible, rejections, metrics

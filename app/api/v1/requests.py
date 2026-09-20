@@ -1,4 +1,4 @@
-"""Blood requests router: /api/v1/requests."""
+from datetime import date, timedelta
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
@@ -11,8 +11,10 @@ from app.core.enums import (
     RequestStatus,
     BloodGroup,
     MatchResponseStatus,
+    AvailabilityStatus,
+    ComponentType,
 )
-from app.models.user import User, Recipient, Donor
+from app.models.user import User, Recipient, Donor, DonationHistory
 from app.models.request import BloodRequest, DonorMatch
 from app.schemas.request import (
     BloodRequestCreate,
@@ -30,6 +32,7 @@ from app.services.email_service import (
     send_single_donor_match_alert,
     send_emergency_broadcast_alert,
     send_donor_accepted_alert,
+    send_donation_completed_thank_you_alert,
 )
 from app.api.v1.donors import get_or_create_donor
 
@@ -469,6 +472,136 @@ def accept_blood_request(
     return format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=False)
 
 
+def resolve_request_completion(
+    db: Session,
+    req: BloodRequest,
+    background_tasks: Optional[BackgroundTasks] = None,
+) -> None:
+    """Execute post-donation resolution:
+    1. Set req.status = RequestStatus.COMPLETED.
+    2. Write DonationHistory record for accepted donor.
+    3. Update donor last_donation_date to date.today().
+    4. Set donor availability_status to UNAVAILABLE (90-day recovery cooldown).
+    5. Optionally dispatch thank-you alert email.
+    """
+    req.status = RequestStatus.COMPLETED
+
+    if not req.accepted_donor_id:
+        return
+
+    donor = (
+        db.query(Donor)
+        .options(
+            joinedload(Donor.user),
+            joinedload(Donor.medical_info),
+        )
+        .filter(Donor.donor_id == req.accepted_donor_id)
+        .first()
+    )
+
+    if donor:
+        today = date.today()
+        min_days = 90 if req.component_type == ComponentType.WHOLE_BLOOD else 14
+        next_eligible_date = today + timedelta(days=min_days)
+        next_eligible_str = next_eligible_date.strftime("%Y-%m-%d")
+
+        hb = 13.5
+        if donor.medical_info and donor.medical_info.hemoglobin_level is not None:
+            hb = float(donor.medical_info.hemoglobin_level)
+
+        hospital_disp = req.hospital_name or req.required_location or "Transfusion Center"
+        notes = f"Completed donation for request #{str(req.request_id)[:8].upper()}"
+        if req.patient_name:
+            notes += f" (Patient: {req.patient_name})"
+
+        donation_record = DonationHistory(
+            donor_id=donor.donor_id,
+            donation_date=today,
+            component_type=req.component_type,
+            quantity=float(req.quantity),
+            hemoglobin_level=hb,
+            center_name=hospital_disp,
+            notes=notes,
+        )
+        db.add(donation_record)
+
+        donor.last_donation_date = today
+        donor.availability_status = AvailabilityStatus.UNAVAILABLE
+
+        if background_tasks and donor.user and donor.user.email:
+            background_tasks.add_task(
+                send_donation_completed_thank_you_alert,
+                donor_email=donor.user.email,
+                donor_name=donor.user.full_name or "Valued Hero",
+                hospital_name=hospital_disp,
+                units=float(req.quantity),
+                component_type=req.component_type.value if hasattr(req.component_type, "value") else str(req.component_type),
+                next_eligible_date=next_eligible_str,
+            )
+
+
+@router.post("/{request_id}/complete", response_model=BloodRequestResponse)
+def complete_blood_request(
+    request_id: UUID,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Mark an accepted blood request as completed, log donor donation history,
+    activate 90-day cooldown, and dispatch thank-you receipt.
+    """
+    req = (
+        db.query(BloodRequest)
+        .options(
+            joinedload(BloodRequest.accepted_donor).joinedload(User.donor),
+            joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user),
+            joinedload(BloodRequest.recipient).joinedload(Recipient.user),
+        )
+        .filter(BloodRequest.request_id == request_id)
+        .first()
+    )
+    if not req:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Blood request not found.",
+        )
+
+    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
+    is_owner = (req.recipient_id == current_user.user_id)
+
+    if not (is_admin or is_owner):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the request creator or an administrator can confirm donation completion.",
+        )
+
+    if req.status not in [RequestStatus.ACCEPTED, RequestStatus.PROCESSING]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot complete request in status '{req.status.value}'. Request must be in 'ACCEPTED' or 'PROCESSING' status.",
+        )
+
+    if not req.accepted_donor_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot complete request without an assigned accepted donor.",
+        )
+
+    resolve_request_completion(db=db, req=req, background_tasks=background_tasks)
+
+    log_system_action(
+        db=db,
+        action="COMPLETE_BLOOD_REQUEST",
+        entity="blood_requests",
+        entity_id=req.request_id,
+        user_id=current_user.user_id,
+    )
+
+    db.commit()
+    db.refresh(req)
+    return format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=is_admin)
+
+
 @router.patch("/{request_id}/status", response_model=BloodRequestResponse)
 def update_request_status(
     request_id: UUID,
@@ -507,11 +640,15 @@ def update_request_status(
                 detail="Not authorized to update this blood request status.",
             )
 
-    req.status = status_update.status
     if status_update.accepted_donor_id:
         req.accepted_donor_id = status_update.accepted_donor_id
     elif status_update.status == RequestStatus.ACCEPTED and not req.accepted_donor_id:
         req.accepted_donor_id = current_user.user_id
+
+    if status_update.status == RequestStatus.COMPLETED:
+        resolve_request_completion(db=db, req=req)
+    else:
+        req.status = status_update.status
 
     log_system_action(
         db=db,

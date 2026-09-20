@@ -418,3 +418,111 @@ def send_donor_accepted_alert(
     )
 
 
+def _render_donation_completed_html(
+    donor_name: str,
+    hospital_name: str,
+    units: float,
+    component_type: str,
+    next_eligible_date: Optional[str] = None,
+) -> str:
+    """Render HTML template for thanking donor and notifying of 90-day cooldown."""
+    portal_url = f"{settings.FRONTEND_URL}/donor?tab=history"
+    eligible_str = next_eligible_date or "in 90 days"
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; color: #1e293b; margin: 0; padding: 20px; }}
+    .container {{ max-width: 580px; margin: 0 auto; background: #ffffff; border-radius: 8px; border: 1px solid #6366f1; overflow: hidden; box-shadow: 0 4px 10px rgba(99, 102, 241, 0.1); }}
+    .header {{ background-color: #4f46e5; color: #ffffff; padding: 24px; text-align: center; }}
+    .badge {{ display: inline-block; background-color: #e0e7ff; color: #3730a3; padding: 4px 12px; border-radius: 9999px; font-weight: 700; font-size: 12px; text-transform: uppercase; margin-bottom: 8px; }}
+    .header h1 {{ margin: 0; font-size: 22px; font-weight: 800; }}
+    .body {{ padding: 28px 24px; }}
+    .highlight-card {{ background-color: #eef2ff; border-left: 4px solid #6366f1; padding: 18px; margin: 20px 0; border-radius: 4px; }}
+    .row {{ margin-bottom: 8px; font-size: 14px; }}
+    .label {{ font-weight: 600; color: #64748b; }}
+    .value {{ font-weight: 700; color: #0f172a; }}
+    .btn {{ display: inline-block; background-color: #4f46e5; color: #ffffff !important; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: 700; font-size: 14px; margin-top: 12px; text-align: center; }}
+    .footer {{ padding: 20px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; }}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="badge">DONATION COMPLETED • HERO CONFIRMED</div>
+      <h1>Thank You for Saving a Life!</h1>
+      <p style="margin: 4px 0 0 0; opacity: 0.95;">Your donation was officially confirmed by the recipient center</p>
+    </div>
+    <div class="body">
+      <p>Dear <strong>{donor_name}</strong>,</p>
+      <p>On behalf of the recipient, hospital care team, and the entire LifeDrop community, thank you for your generous, life-saving blood donation.</p>
+      
+      <div class="highlight-card">
+        <div class="row"><span class="label">Hospital / Center:</span> <span class="value">{hospital_name}</span></div>
+        <div class="row"><span class="label">Units Donated:</span> <span class="value">{units} Unit(s) ({component_type.replace('_', ' ')})</span></div>
+        <div class="row"><span class="label">Recovery Cooldown:</span> <span class="value" style="color: #4f46e5;">90 Days Mandated Rest</span></div>
+        <div class="row"><span class="label">Next Eligible Date:</span> <span class="value">{eligible_str}</span></div>
+      </div>
+
+      <p>To ensure your body has ample time to replenish red cells and maintain safe hemoglobin reserves, your profile is now placed on temporary recovery cooldown until <strong>{eligible_str}</strong>.</p>
+      
+      <div style="text-align: center;">
+        <a href="{portal_url}" class="btn">View Your Donation History & Tier</a>
+      </div>
+    </div>
+    <div class="footer">
+      <p>LifeDrop Network • Smart Blood Donation Management System</p>
+      <p>Every donation counts. Rest well, hydrate, and thank you for being a lifeline in our healthcare community.</p>
+    </div>
+  </div>
+</body>
+</html>"""
+
+
+def send_donation_completed_thank_you_alert(
+    donor_email: str,
+    donor_name: str,
+    hospital_name: str,
+    units: float,
+    component_type: str,
+    next_eligible_date: Optional[str] = None,
+) -> bool:
+    """Send formal thank-you and 90-day recovery cooldown notice to the donor upon completion."""
+    if not donor_email:
+        return False
+
+    eligible_str = next_eligible_date or "in 90 days"
+    subject = "Thank You for Saving a Life! Donation Confirmed — LifeDrop"
+
+    text_content = (
+        f"Dear {donor_name},\n\n"
+        f"Thank you for your generous blood donation!\n"
+        f"Your donation of {units} unit(s) ({component_type}) at {hospital_name} has been officially confirmed.\n\n"
+        f"Recovery Cooldown Notice:\n"
+        f"To ensure adequate recovery, your 90-day cooldown window is now active.\n"
+        f"Your next eligible donation date is: {eligible_str}.\n\n"
+        f"You can view your updated donation records and milestone tier in your donor dashboard:\n"
+        f"{settings.FRONTEND_URL}/donor?tab=history\n\n"
+        f"With sincere gratitude,\n"
+        f"— LifeDrop Network"
+    )
+
+    html_content = _render_donation_completed_html(
+        donor_name=donor_name,
+        hospital_name=hospital_name,
+        units=units,
+        component_type=component_type,
+        next_eligible_date=next_eligible_date,
+    )
+
+    return _dispatch_email(
+        to_email=donor_email,
+        subject=subject,
+        text_content=text_content,
+        html_content=html_content,
+        is_emergency=False,
+    )
+
+
