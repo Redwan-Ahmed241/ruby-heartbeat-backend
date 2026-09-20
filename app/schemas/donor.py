@@ -93,3 +93,17 @@ class DonorResponse(BaseModel):
     medical_info: Optional[MedicalInfoResponse] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TopDonorResponse(BaseModel):
+    donor_id: UUID
+    full_name: str
+    blood_group: BloodGroup
+    area_zone: Optional[str] = None
+    donation_count: int
+    tier: str
+    badge_icon: str
+    last_donation_date: Optional[date] = None
+
+    model_config = ConfigDict(from_attributes=True)
+

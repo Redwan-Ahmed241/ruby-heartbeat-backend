@@ -1,11 +1,12 @@
 """Donors router: /api/v1/donors."""
 from datetime import date
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
-from app.core.enums import UserRole, BloodGroup, AvailabilityStatus
+from app.core.enums import UserRole, BloodGroup, AvailabilityStatus, UserStatus
 from app.models.user import User, Donor, MedicalInfo, DonationHistory
 from app.schemas.donor import (
     DonorResponse,
@@ -16,9 +17,10 @@ from app.schemas.donor import (
     DonationHistoryCreate,
     DonationHistoryResponse,
     EligibilityCheckResponse,
+    TopDonorResponse,
 )
 from app.api.deps import get_current_active_user, RequireRoles
-from app.services.eligibility import check_donor_eligibility
+from app.services.eligibility import check_donor_eligibility, calculate_donor_tier
 from app.services.audit import log_system_action
 
 router = APIRouter(prefix="/donors", tags=["Donors"])
@@ -215,3 +217,84 @@ def record_donation_history(
     db.commit()
     db.refresh(new_entry)
     return new_entry
+
+
+@router.get("/top", response_model=List[TopDonorResponse])
+def get_top_donors(
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+):
+    """Public leaderboard endpoint returning top ranked donors.
+    
+    Ranking priority:
+    1. Tier priority (Diamond: 4 > Platinum: 3 > Silver: 2 > Bronze: 1)
+    2. Verified completed donation count descending
+    3. Most recent donation date descending
+    """
+    donor_counts = (
+        db.query(
+            DonationHistory.donor_id,
+            func.count(DonationHistory.history_id).label("donation_count"),
+            func.max(DonationHistory.donation_date).label("latest_donation_date"),
+        )
+        .group_by(DonationHistory.donor_id)
+        .having(func.count(DonationHistory.history_id) >= 1)
+        .subquery()
+    )
+
+    results = (
+        db.query(
+            Donor,
+            donor_counts.c.donation_count,
+            donor_counts.c.latest_donation_date,
+        )
+        .join(donor_counts, Donor.donor_id == donor_counts.c.donor_id)
+        .join(Donor.user)
+        .options(joinedload(Donor.user))
+        .filter(User.status == UserStatus.ACTIVE)
+        .all()
+    )
+
+    ranked_donors = []
+    for donor, count, latest_date in results:
+        tier, icon, priority = calculate_donor_tier(count)
+        area_zone = donor.address.split(",")[0].strip() if donor.address else "Dhaka"
+        last_date = latest_date or donor.last_donation_date
+
+        ranked_donors.append({
+            "donor_id": donor.donor_id,
+            "full_name": donor.user.full_name if donor.user else "Anonymous Donor",
+            "blood_group": donor.blood_group,
+            "area_zone": area_zone,
+            "donation_count": count,
+            "tier": tier,
+            "badge_icon": icon,
+            "priority": priority,
+            "last_donation_date": last_date,
+        })
+
+    # Sort strictly by tier priority desc, donation_count desc, last_donation_date desc
+    ranked_donors.sort(
+        key=lambda d: (
+            d["priority"],
+            d["donation_count"],
+            d["last_donation_date"] or date.min,
+        ),
+        reverse=True,
+    )
+
+    top_donors = ranked_donors[:limit]
+    return [
+        TopDonorResponse(
+            donor_id=d["donor_id"],
+            full_name=d["full_name"],
+            blood_group=d["blood_group"],
+            area_zone=d["area_zone"],
+            donation_count=d["donation_count"],
+            tier=d["tier"],
+            badge_icon=d["badge_icon"],
+            last_donation_date=d["last_donation_date"],
+        )
+        for d in top_donors
+    ]
+

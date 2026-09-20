@@ -20,6 +20,32 @@ def calculate_age(born: date, today: Optional[date] = None) -> int:
     return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
 
 
+def calculate_donor_tier(donation_count: int) -> Tuple[str, str, int]:
+    """Calculate donor achievement tier and ranking priority based on completed donations.
+    
+    Standardized Tiers (Doc Section 8):
+    - Diamond: >= 10 verified donations (Highest honor, badge: 💎, priority: 4)
+    - Platinum: 6-9 verified donations (badge: ⚡, priority: 3)
+    - Silver: 3-5 verified donations (badge: 🥈, priority: 2)
+    - Bronze: 1-2 verified donations (badge: 🥉, priority: 1)
+    - New: 0 verified donations (badge: 🩸, priority: 0)
+    
+    Returns:
+        Tuple of (tier_name, badge_icon, priority_weight)
+    """
+    if donation_count >= 10:
+        return "Diamond", "💎", 4
+    elif donation_count >= 6:
+        return "Platinum", "⚡", 3
+    elif donation_count >= 3:
+        return "Silver", "🥈", 2
+    elif donation_count >= 1:
+        return "Bronze", "🥉", 1
+    else:
+        return "New", "🩸", 0
+
+
+
 def check_donor_eligibility(
     donor: Donor,
     target_component: ComponentType = ComponentType.WHOLE_BLOOD,

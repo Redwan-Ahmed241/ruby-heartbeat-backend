@@ -1118,6 +1118,134 @@ def test_phase6_post_donation_completion_history_and_cooldown():
     assert double_complete.status_code == 400
 
 
+def test_phase7_donor_ranking_tiers_and_leaderboard():
+    """Phase 7: Test donor achievement tiers calculation and top donors leaderboard."""
+    from app.services.eligibility import calculate_donor_tier
+
+    # 1. Unit verification of 4 standardized tiers
+    assert calculate_donor_tier(0) == ("New", "🩸", 0)
+    assert calculate_donor_tier(1) == ("Bronze", "🥉", 1)
+    assert calculate_donor_tier(2) == ("Bronze", "🥉", 1)
+    assert calculate_donor_tier(3) == ("Silver", "🥈", 2)
+    assert calculate_donor_tier(5) == ("Silver", "🥈", 2)
+    assert calculate_donor_tier(6) == ("Platinum", "⚡", 3)
+    assert calculate_donor_tier(9) == ("Platinum", "⚡", 3)
+    assert calculate_donor_tier(10) == ("Diamond", "💎", 4)
+    assert calculate_donor_tier(15) == ("Diamond", "💎", 4)
+
+    # 2. Register distinct donors to test leaderboard ranking
+    tag = uuid.uuid4().hex[:6]
+
+    def register_and_add_donations(name_suffix: str, count: int):
+        email = f"tier_donor_{name_suffix}_{tag}@test.com"
+        reg_res = client.post(
+            "/api/v1/auth/register",
+            json={
+                "full_name": f"Ranked Donor {name_suffix.upper()}",
+                "email": email,
+                "phone": f"+88017{name_suffix[:6].ljust(8, '0')}",
+                "password": "Password123!",
+                "role": "DONOR",
+                "donor_profile": {
+                    "blood_group": "A_POSITIVE",
+                    "date_of_birth": "1994-04-15",
+                    "gender": "Male",
+                    "weight": 70.0,
+                    "address": f"Dhanmondi Sector {name_suffix}, Dhaka",
+                    "latitude": 23.7465,
+                    "longitude": 90.3760,
+                    "hemoglobin_level": 14.0,
+                },
+            },
+        )
+        assert reg_res.status_code == 201
+        user_id = reg_res.json()["user_id"]
+
+        login_res = client.post(
+            "/api/v1/auth/login",
+            json={"email": email, "password": "Password123!"},
+        )
+        assert login_res.status_code == 200
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Add donation history entries
+        for i in range(count):
+            d_date = (date.today() - timedelta(days=100 * (i + 1))).strftime("%Y-%m-%d")
+            h_res = client.post(
+                "/api/v1/donors/history",
+                headers=headers,
+                json={
+                    "donation_date": d_date,
+                    "component_type": "WHOLE_BLOOD",
+                    "quantity": 1.0,
+                    "hemoglobin_level": 14.0,
+                    "center_name": f"Center {i+1}",
+                },
+            )
+            assert h_res.status_code == 201
+        return user_id, headers
+
+    # Create Diamond donor (10 donations), Platinum donor (7 donations), Silver donor (3 donations), Bronze donor (1 donation)
+    d_id, _ = register_and_add_donations("diam", 10)
+    p_id, _ = register_and_add_donations("plat", 7)
+    s_id, _ = register_and_add_donations("silv", 3)
+    b_id, _ = register_and_add_donations("bron", 1)
+
+    # 3. Public GET /api/v1/donors/top endpoint without auth headers
+    top_res = client.get("/api/v1/donors/top?limit=20")
+    assert top_res.status_code == 200
+    top_donors = top_res.json()
+    assert len(top_donors) >= 4
+
+    # Extract our test donors from the top list
+    donor_map = {d["donor_id"]: d for d in top_donors}
+    assert d_id in donor_map
+    assert p_id in donor_map
+    assert s_id in donor_map
+    assert b_id in donor_map
+
+    diamond_entry = donor_map[d_id]
+    platinum_entry = donor_map[p_id]
+    silver_entry = donor_map[s_id]
+    bronze_entry = donor_map[b_id]
+
+    # Verify Tiers and Badge Icons
+    assert diamond_entry["tier"] == "Diamond"
+    assert diamond_entry["badge_icon"] == "💎"
+    assert diamond_entry["donation_count"] >= 10
+    assert diamond_entry["area_zone"] == "Dhanmondi Sector diam"
+
+    assert platinum_entry["tier"] == "Platinum"
+    assert platinum_entry["badge_icon"] == "⚡"
+    assert platinum_entry["donation_count"] == 7
+
+    assert silver_entry["tier"] == "Silver"
+    assert silver_entry["badge_icon"] == "🥈"
+    assert silver_entry["donation_count"] == 3
+
+    assert bronze_entry["tier"] == "Bronze"
+    assert bronze_entry["badge_icon"] == "🥉"
+    assert bronze_entry["donation_count"] == 1
+
+    # Verify public safety: no phone, email, or exact coordinates in returned json
+    for entry in top_donors:
+        assert "phone" not in entry
+        assert "email" not in entry
+        assert "latitude" not in entry
+        assert "longitude" not in entry
+
+    # Verify ranking order: Diamond must appear before Platinum, Platinum before Silver, Silver before Bronze
+    indices = [
+        next(i for i, d in enumerate(top_donors) if d["donor_id"] == d_id),
+        next(i for i, d in enumerate(top_donors) if d["donor_id"] == p_id),
+        next(i for i, d in enumerate(top_donors) if d["donor_id"] == s_id),
+        next(i for i, d in enumerate(top_donors) if d["donor_id"] == b_id),
+    ]
+    assert indices == sorted(indices), f"Expected strict rank ordering (Diamond < Plat < Silv < Bron), got {indices}"
+
+
+
 
 
 
