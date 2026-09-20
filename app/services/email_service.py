@@ -1,17 +1,15 @@
 """Asynchronous transactional email notification service.
 
 Provides non-blocking email dispatch with:
-1. Console Safe Mock fallback for local development and defense demonstrations.
-2. Standard SMTP support (built-in smtplib).
-3. Resend HTTP API support (via httpx).
-4. Single donor match alerts and emergency mass radius broadcasts.
+1. Standard SMTP support (Gmail, etc.).
+2. Console Safe Mock fallback for local development and defense demonstrations.
+3. Single donor match alerts and emergency mass radius broadcasts.
 """
 import smtplib
 import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import List, Optional
-import httpx
 
 from app.core.config import settings
 
@@ -156,33 +154,7 @@ def _dispatch_email(
     """Internal dispatcher handling Resend, SMTP, or Graceful Console Fallback."""
     body_preview = text_content[:120].replace("\n", " ").strip()
 
-    # 1. Option: Resend HTTP API (if configured)
-    if settings.RESEND_API_KEY:
-        try:
-            headers = {
-                "Authorization": f"Bearer {settings.RESEND_API_KEY}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "from": f"{settings.EMAILS_FROM_NAME} <{settings.EMAILS_FROM_EMAIL}>",
-                "to": [to_email],
-                "subject": subject,
-                "text": text_content,
-                "html": html_content,
-            }
-            with httpx.Client(timeout=10.0) as client:
-                res = client.post("https://api.resend.com/emails", json=payload, headers=headers)
-                if res.status_code in (200, 201):
-                    logger.info(f"✅ [EMAIL SENT via Resend] To: {to_email} | Subject: {subject}")
-                    return True
-                else:
-                    logger.warning(
-                        f"⚠️ Resend returned status {res.status_code}: {res.text}. Falling back to console mock."
-                    )
-        except Exception as exc:
-            logger.warning(f"⚠️ Resend dispatch error to {to_email}: {exc}. Falling back to console mock.")
-
-    # 2. Option: Standard SMTP (if configured)
+    # 1. Option: Standard SMTP (Gmail, etc., if configured)
     if settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD:
         try:
             msg = MIMEMultipart("alternative")
@@ -208,7 +180,7 @@ def _dispatch_email(
         except Exception as exc:
             logger.warning(f"⚠️ SMTP dispatch error to {to_email}: {exc}. Falling back to console mock.")
 
-    # 3. Critical Fail-Safe / Demo Mode: Console Mock Log
+    # 2. Critical Fail-Safe / Demo Mode: Console Mock Log
     # Gracefully logs dispatch without throwing exceptions
     logger.info(f"📧 [MOCK EMAIL SENT] To: {to_email} | Subject: {subject} | Body: {body_preview}...")
     return True

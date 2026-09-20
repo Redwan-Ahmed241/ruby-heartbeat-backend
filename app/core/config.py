@@ -27,7 +27,6 @@ class Settings(BaseSettings):
     SMTP_TLS: bool = True
     EMAILS_FROM_EMAIL: str = "noreply@lifedrop.org"
     EMAILS_FROM_NAME: str = "LifeDrop Blood Network"
-    RESEND_API_KEY: Optional[str] = None
     FRONTEND_URL: str = "http://localhost:5173"
 
 
