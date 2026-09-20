@@ -2,6 +2,7 @@ from datetime import date, timedelta
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
+from sqlalchemy import case
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
@@ -343,7 +344,12 @@ def list_blood_requests(
     if status_filter:
         query = query.filter(BloodRequest.status == status_filter)
 
-    requests = query.order_by(BloodRequest.request_date.desc()).all()
+    urgency_priority = case(
+        (BloodRequest.urgency == RequestUrgency.EMERGENCY, 1),
+        (BloodRequest.urgency == RequestUrgency.URGENT, 2),
+        else_=3,
+    )
+    requests = query.order_by(urgency_priority.asc(), BloodRequest.request_date.desc()).all()
     viewer_id = current_user.user_id if current_user else None
     is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN] if current_user else False
     return [

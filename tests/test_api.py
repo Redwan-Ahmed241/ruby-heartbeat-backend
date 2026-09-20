@@ -1393,6 +1393,129 @@ def test_phase8_cancel_and_reopen_request_flow():
     assert reopen_completed.status_code == 400
 
 
+def test_phase9_urgent_feed_pinning_and_unified_dashboard_queries():
+    """Phase 9: Test emergency request feed pinning (EMERGENCY > URGENT > NORMAL) and unified dashboard queries."""
+    tag = uuid.uuid4().hex[:6]
+    rec_email = f"phase9_user_{tag}@test.com"
+
+    # Register user with dual role capability
+    reg_res = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": f"Phase9 Dual User {tag}",
+            "email": rec_email,
+            "phone": "+8801799887711",
+            "password": "Password123!",
+            "role": "RECIPIENT",
+            "blood_group": "B_POSITIVE",
+            "address": "Gulshan 1, Dhaka",
+        },
+    )
+    assert reg_res.status_code == 201
+    login_res = client.post(
+        "/api/v1/auth/login",
+        json={"email": rec_email, "password": "Password123!"},
+    )
+    assert login_res.status_code == 200
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+
+    # 1. Create NORMAL urgency request first
+    normal_res = client.post(
+        "/api/v1/requests/",
+        headers=headers,
+        json={
+            "blood_group": "B_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 1.0,
+            "urgency": "NORMAL",
+            "hospital_name": f"Standard Hospital {tag}",
+            "required_location": f"Standard Hospital {tag}",
+            "latitude": 23.7925,
+            "longitude": 90.4078,
+            "patient_name": "Normal Patient",
+            "area_zone": "Gulshan, Dhaka",
+            "attendant_phone_number": "+8801711223344",
+        },
+    )
+    assert normal_res.status_code == 201
+    normal_id = normal_res.json()["request_id"]
+
+    # 2. Create URGENT request second
+    urgent_res = client.post(
+        "/api/v1/requests/",
+        headers=headers,
+        json={
+            "blood_group": "B_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 2.0,
+            "urgency": "URGENT",
+            "hospital_name": f"Urgent Care Center {tag}",
+            "required_location": f"Urgent Care Center {tag}",
+            "latitude": 23.7925,
+            "longitude": 90.4078,
+            "patient_name": "Urgent Patient",
+            "area_zone": "Gulshan, Dhaka",
+            "attendant_phone_number": "+8801711223355",
+        },
+    )
+    assert urgent_res.status_code == 201
+    urgent_id = urgent_res.json()["request_id"]
+
+    # 3. Create EMERGENCY request third
+    emergency_res = client.post(
+        "/api/v1/requests/emergency",
+        headers=headers,
+        json={
+            "blood_group": "B_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 3.0,
+            "hospital_name": f"Critical Trauma Center {tag}",
+            "required_location": f"Critical Trauma Center {tag}",
+            "latitude": 23.7925,
+            "longitude": 90.4078,
+            "patient_name": "Critical Patient",
+            "area_zone": "Gulshan, Dhaka",
+            "attendant_phone_number": "+8801711223366",
+        },
+    )
+    assert emergency_res.status_code == 201
+    emergency_id = emergency_res.json()["request_id"]
+
+    # 4. Fetch the public feed (GET /api/v1/requests)
+    # Even though EMERGENCY was created last, it MUST be sorted first due to urgency priority pinning!
+    feed_res = client.get("/api/v1/requests/")
+    assert feed_res.status_code == 200
+    feed_items = feed_res.json()
+
+    # Find the positions of each request in the feed
+    req_ids_in_order = [item["request_id"] for item in feed_items]
+    assert emergency_id in req_ids_in_order
+    assert urgent_id in req_ids_in_order
+    assert normal_id in req_ids_in_order
+
+    idx_emergency = req_ids_in_order.index(emergency_id)
+    idx_urgent = req_ids_in_order.index(urgent_id)
+    idx_normal = req_ids_in_order.index(normal_id)
+
+    # Assert strict urgency priority ordering: EMERGENCY < URGENT < NORMAL
+    assert idx_emergency < idx_urgent
+    assert idx_urgent < idx_normal
+
+    # 5. Verify feed filtering by status and urgency for Unified Dashboard tabs
+    open_res = client.get("/api/v1/requests/?status=OPEN")
+    assert open_res.status_code == 200
+    open_ids = [r["request_id"] for r in open_res.json()]
+    assert emergency_id in open_ids
+    assert urgent_id in open_ids
+    assert normal_id in open_ids
+
+    urgency_filter_res = client.get("/api/v1/requests/?urgency=EMERGENCY")
+    assert urgency_filter_res.status_code == 200
+    for r in urgency_filter_res.json():
+        assert r["urgency"] == "EMERGENCY"
+
+
+
 
 
 
