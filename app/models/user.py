@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, date
 from sqlalchemy import (
     Column,
+    Integer,
     String,
     Date,
     DateTime,
@@ -34,6 +35,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     role = Column(SQLEnum(UserRole, name="user_role_enum"), nullable=False)
     status = Column(SQLEnum(UserStatus, name="user_status_enum"), default=UserStatus.ACTIVE, nullable=False)
+    nid_or_birth_cert = Column(String(50), nullable=True, default=None)
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime,
@@ -66,6 +68,7 @@ class Donor(Base):
     latitude = Column(Numeric(9, 6), nullable=False)
     longitude = Column(Numeric(9, 6), nullable=False)
     last_donation_date = Column(Date, nullable=True)
+    total_donations = Column(Integer, default=0, nullable=False)
     availability_status = Column(
         SQLEnum(AvailabilityStatus, name="availability_status_enum"),
         default=AvailabilityStatus.AVAILABLE,
@@ -79,6 +82,15 @@ class Donor(Base):
         server_default=func.now(),
         onupdate=datetime.utcnow,
     )
+
+
+    @property
+    def is_available(self) -> bool:
+        return self.availability_status == AvailabilityStatus.AVAILABLE
+
+    @is_available.setter
+    def is_available(self, val: bool):
+        self.availability_status = AvailabilityStatus.AVAILABLE if val else AvailabilityStatus.UNAVAILABLE
 
     # Relationships
     user = relationship("User", back_populates="donor")

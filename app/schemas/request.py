@@ -39,6 +39,7 @@ class BloodRequestCreate(BaseModel):
     area_zone: Optional[str] = Field(None, max_length=100)
     attendant_phone_number: Optional[str] = Field(None, max_length=25)
     volume_ml: Optional[float] = Field(None, ge=0)
+    is_contact_public: bool = False
 
 
 class MaskedDonorMatchResponse(BaseModel):
@@ -55,6 +56,9 @@ class MaskedDonorMatchResponse(BaseModel):
     # Contact Reveal Safeguard: Phone, address, email are masked in this view
     donor_name_initial: str
     contact_revealed: bool = False
+    donor_confirmed_completion: bool = False
+    recipient_confirmed_completion: bool = False
+    completed_at: Optional[datetime] = None
 
     # Approximate location for map visualization (~1km privacy grid)
     approx_latitude: Optional[float] = None
@@ -94,10 +98,27 @@ class BloodRequestResponse(BaseModel):
     volume_ml: Optional[float] = None
     accepted_donor_id: Optional[UUID] = None
     accepted_donor: Optional[AcceptedDonorSummary] = None
+    is_contact_public: bool = False
     matches: Optional[List[MaskedDonorMatchResponse]] = None
 
     model_config = ConfigDict(from_attributes=True)
 
+
+
+class BloodRequestUpdate(BaseModel):
+    is_contact_public: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class MatchCompletionStatusResponse(BaseModel):
+    match_id: UUID
+    request_id: UUID
+    status: MatchResponseStatus
+    donor_confirmed_completion: bool
+    recipient_confirmed_completion: bool
+    is_completed: bool
+    completed_at: Optional[datetime] = None
+    cooldown_until: Optional[datetime] = None
 
 class RequestStatusUpdate(BaseModel):
     status: RequestStatus

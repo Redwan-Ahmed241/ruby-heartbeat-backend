@@ -178,7 +178,7 @@ def _dispatch_email(
             logger.info(f"✅ [EMAIL SENT via SMTP] To: {to_email} | Subject: {subject}")
             return True
         except Exception as exc:
-            logger.warning(f"⚠️ SMTP dispatch error to {to_email}: {exc}. Falling back to console mock.")
+            logger.error(f"❌ Failed to dispatch email to {to_email}: {str(exc)}", exc_info=True)
 
     # 2. Critical Fail-Safe / Demo Mode: Console Mock Log
     # Gracefully logs dispatch without throwing exceptions
@@ -572,3 +572,49 @@ def send_match_cancelled_reopened_alert(
 
 
 
+
+
+def send_request_creation_confirmation_alert(
+    recipient_email: str,
+    recipient_name: str,
+    blood_group: str,
+    hospital_name: str,
+    units: float,
+    request_id: str,
+) -> bool:
+    """Send broadcast confirmation to the creating recipient upon new blood request creation."""
+    if not recipient_email:
+        return False
+
+    subject = f"Blood Request Broadcast Active ({blood_group}) — LifeDrop"
+    text_content = (
+        f"Hello {recipient_name},\n\n"
+        f"Your blood request for {units} unit(s) of {blood_group} at {hospital_name} has been successfully broadcast to nearby eligible donors.\n\n"
+        f"Request ID: {request_id}\n"
+        f"You will receive alerts as compatible donors accept your request.\n\n"
+        f"Live tracking: {settings.FRONTEND_URL}/request/{request_id}\n\n"
+        f"— LifeDrop Emergency Dispatch Network"
+    )
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:sans-serif;padding:20px;background:#f8fafc;color:#1e293b;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;border-radius:8px;padding:24px;border:1px solid #e2e8f0;">
+    <h2 style="color:#8B0000;margin-top:0;">Blood Request Broadcast Confirmed</h2>
+    <p>Hello <strong>{recipient_name}</strong>,</p>
+    <p>Your blood request for <strong>{units} unit(s) of {blood_group}</strong> at <strong>{hospital_name}</strong> is now live.</p>
+    <p>Our Intelligent Matching Engine has initiated searches for nearby compatible volunteer donors.</p>
+    <div style="margin:20px 0;"><a href="{settings.FRONTEND_URL}/request/{request_id}" style="background:#8B0000;color:#fff;padding:10px 20px;text-decoration:none;border-radius:6px;font-weight:bold;">View Live Request Status</a></div>
+    <p style="font-size:12px;color:#94a3b8;">LifeDrop Smart Blood Donation Network</p>
+  </div>
+</body>
+</html>"""
+
+    return _dispatch_email(
+        to_email=recipient_email,
+        subject=subject,
+        text_content=text_content,
+        html_content=html_content,
+        is_emergency=False,
+    )

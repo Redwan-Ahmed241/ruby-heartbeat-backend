@@ -1,8 +1,8 @@
-from datetime import date, timedelta
+from datetime import datetime, date, timedelta
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
-from sqlalchemy import case
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
@@ -36,6 +36,7 @@ from app.services.email_service import (
     send_donor_accepted_alert,
     send_donation_completed_thank_you_alert,
     send_match_cancelled_reopened_alert,
+    send_request_creation_confirmation_alert,
 )
 from app.api.v1.donors import get_or_create_donor
 
@@ -91,6 +92,7 @@ def format_blood_request_response(
     is_authorized = (
         is_admin
         or (viewer_user_id is not None and (viewer_user_id == req.recipient_id or viewer_user_id == req.accepted_donor_id))
+        or bool(getattr(req, "is_contact_public", False))
     )
 
     exposed_phone = req.attendant_phone_number if is_authorized else mask_phone_number(req.attendant_phone_number)
@@ -129,6 +131,7 @@ def format_blood_request_response(
         volume_ml=float(req.volume_ml) if req.volume_ml is not None else None,
         accepted_donor_id=req.accepted_donor_id,
         accepted_donor=accepted_donor_summary,
+        is_contact_public=getattr(req, "is_contact_public", False),
         matches=masked_matches,
     )
 
@@ -162,6 +165,26 @@ def create_blood_request(
     attendant_phone = request_data.attendant_phone_number or current_user.phone
     volume_ml = request_data.volume_ml if request_data.volume_ml is not None else (float(request_data.quantity) * 450.0)
 
+    # Clinical Rule: Recipient Patient Rate Limiting (Max 2 active requests per 24h window for same patient)
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    normalized_patient = (patient_name or "").strip().lower()
+    if normalized_patient:
+        active_count = (
+            db.query(func.count(BloodRequest.request_id))
+            .filter(
+                BloodRequest.recipient_id == recipient_id,
+                func.lower(func.trim(BloodRequest.patient_name)) == normalized_patient,
+                BloodRequest.request_date >= cutoff,
+                BloodRequest.status != RequestStatus.CANCELLED,
+            )
+            .scalar()
+        )
+        if active_count and active_count >= 2:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Daily limit reached: You can create a maximum of 2 active requests for this patient within a 24-hour window. If a previous request is no longer needed, cancel it first.",
+            )
+
     blood_req = BloodRequest(
         recipient_id=recipient_id,
         blood_group=request_data.blood_group,
@@ -178,9 +201,22 @@ def create_blood_request(
         area_zone=request_data.area_zone,
         attendant_phone_number=attendant_phone,
         volume_ml=volume_ml,
+        is_contact_public=getattr(request_data, "is_contact_public", False),
     )
     db.add(blood_req)
     db.flush()
+
+        # Dispatch broadcast confirmation email to recipient
+    if current_user.email:
+        background_tasks.add_task(
+            send_request_creation_confirmation_alert,
+            recipient_email=current_user.email,
+            recipient_name=current_user.full_name,
+            blood_group=str(blood_req.blood_group.value if hasattr(blood_req.blood_group, "value") else blood_req.blood_group),
+            hospital_name=str(hospital_name),
+            units=float(blood_req.quantity),
+            request_id=str(blood_req.request_id),
+        )
 
     matches = run_matching_engine(db=db, request=blood_req, is_emergency=(request_data.urgency == RequestUrgency.EMERGENCY))
     if matches:
@@ -281,6 +317,7 @@ def create_emergency_request(
         area_zone=request_data.area_zone,
         attendant_phone_number=attendant_phone,
         volume_ml=volume_ml,
+        is_contact_public=getattr(request_data, "is_contact_public", False),
     )
     db.add(blood_req)
     db.flush()
@@ -871,3 +908,56 @@ def get_request_matches(
     )
 
     return [build_masked_match_response(m) for m in matches]
+
+
+@router.post("/{request_id}/cancel", response_model=BloodRequestResponse)
+def cancel_blood_request(
+    request_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Cancel an OPEN or SEARCHING blood request and release candidate pending matches."""
+    req = (
+        db.query(BloodRequest)
+        .options(
+            joinedload(BloodRequest.accepted_donor).joinedload(User.donor),
+            joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user),
+        )
+        .filter(BloodRequest.request_id == request_id)
+        .first()
+    )
+    if not req:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Blood request not found.",
+        )
+
+    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN]
+    is_owner = (req.recipient_id == current_user.user_id)
+
+    if not (is_admin or is_owner):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the creating recipient or a system admin can cancel this request.",
+        )
+
+    # Transition state to CANCELLED
+    req.status = RequestStatus.CANCELLED
+
+    # Release all linked candidate matches: update all associated donor_matches where status == 'PENDING' to 'CANCELLED'
+    if req.matches:
+        for match in req.matches:
+            if match.response_status == MatchResponseStatus.PENDING:
+                match.response_status = MatchResponseStatus.CANCELLED
+
+    log_system_action(
+        db=db,
+        action="REQUEST_CANCELLED",
+        entity="blood_request",
+        entity_id=req.request_id,
+        user_id=current_user.user_id,
+    )
+    db.commit()
+    db.refresh(req)
+
+    return format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=is_admin)

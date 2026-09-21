@@ -298,3 +298,11 @@ def get_top_donors(
         for d in top_donors
     ]
 
+
+@router.get("/leaderboard", response_model=List[TopDonorResponse])
+def get_donor_leaderboard(
+    limit: int = Query(10, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Public leaderboard endpoint returning top ranked donors with blood group."""
+    return get_top_donors(limit=limit, db=db)

@@ -24,10 +24,10 @@ Implements:
 """
 import math
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, List, Tuple
 from uuid import UUID
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session, joinedload
 from app.models.user import Donor, DonationHistory
 from app.models.request import BloodRequest, DonorMatch
@@ -131,6 +131,7 @@ def run_matching_engine(
     cos_lat = math.cos(math.radians(req_lat))
     lon_delta = max_radius_km / (111.0 * max(abs(cos_lat), 1e-6))
 
+    ninety_days_ago = today - timedelta(days=90)
     donors_query = (
         db.query(Donor)
         .options(joinedload(Donor.medical_info), joinedload(Donor.user))
@@ -138,6 +139,7 @@ def run_matching_engine(
             Donor.donor_id != request.recipient_id,
             Donor.blood_group.in_(compatible_groups),
             Donor.availability_status == AvailabilityStatus.AVAILABLE,
+            or_(Donor.last_donation_date == None, Donor.last_donation_date <= ninety_days_ago),
             Donor.latitude.between(req_lat - lat_delta, req_lat + lat_delta),
             Donor.longitude.between(req_lon - lon_delta, req_lon + lon_delta),
         )

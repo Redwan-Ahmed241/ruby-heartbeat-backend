@@ -13,7 +13,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from app.core.database import Base
 from app.core.enums import (
     BloodGroup,
@@ -51,6 +51,7 @@ class BloodRequest(Base):
         nullable=False,
     )
     request_date = Column(DateTime, default=datetime.utcnow, server_default=func.now())
+    created_at = synonym("request_date")
     notes = Column(Text, nullable=True)
 
     # Phase 3 Fields
@@ -59,6 +60,7 @@ class BloodRequest(Base):
     area_zone = Column(String(100), nullable=True)
     attendant_phone_number = Column(String(25), nullable=True)
     volume_ml = Column(Numeric(6, 2), nullable=True)
+    is_contact_public = Column(Boolean, default=False, nullable=False)
     accepted_donor_id = Column(
         UUID(as_uuid=True),
         ForeignKey("users.user_id", ondelete="SET NULL"),
@@ -94,12 +96,24 @@ class DonorMatch(Base):
         nullable=False,
     )
     start_date = Column(DateTime, default=datetime.utcnow, server_default=func.now())
+    donor_confirmed_completion = Column(Boolean, default=False, nullable=False)
+    recipient_confirmed_completion = Column(Boolean, default=False, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
     updated_at = Column(
         DateTime,
         default=datetime.utcnow,
         server_default=func.now(),
         onupdate=datetime.utcnow,
     )
+
+
+    @property
+    def status(self):
+        return self.response_status
+
+    @status.setter
+    def status(self, val):
+        self.response_status = val
 
     # Relationships
     blood_request = relationship("BloodRequest", back_populates="matches")

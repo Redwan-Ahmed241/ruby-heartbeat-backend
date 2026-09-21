@@ -1,13 +1,14 @@
+from datetime import datetime, date, timedelta
 """Matches and Contact Reveal Safeguard router: /api/v1/matches."""
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
-from app.core.enums import UserRole, MatchResponseStatus, RequestStatus
+from app.core.enums import UserRole, MatchResponseStatus, RequestStatus, AvailabilityStatus
 from app.models.user import User, Donor
 from app.models.request import DonorMatch, BloodRequest
-from app.schemas.request import MatchRespondRequest, DonorContactReveal
+from app.schemas.request import MatchRespondRequest, DonorContactReveal, MatchCompletionStatusResponse
 from app.api.deps import get_current_active_user, RequireRoles
 from app.services.audit import log_system_action
 
@@ -41,6 +42,31 @@ def respond_to_match(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You are not authorized to respond to this match.",
         )
+
+    # Donor Concurrency Lock: A donor who accepts a donation request cannot accept another
+    # until current match is completed or cancelled.
+    if response_data.response == MatchResponseStatus.ACCEPTED:
+        active_match = (
+            db.query(DonorMatch)
+            .join(BloodRequest, DonorMatch.request_id == BloodRequest.request_id)
+            .filter(
+                DonorMatch.donor_id == current_user.user_id,
+                DonorMatch.match_id != match_id,
+                DonorMatch.response_status == MatchResponseStatus.ACCEPTED,
+                BloodRequest.status.in_([
+                    RequestStatus.OPEN,
+                    RequestStatus.MATCHED,
+                    RequestStatus.PROCESSING,
+                    RequestStatus.ACCEPTED,
+                ]),
+            )
+            .first()
+        )
+        if active_match:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You already have an active accepted donation commitment. You must complete or cancel your active commitment before accepting another request.",
+            )
 
     match.response_status = response_data.response
 
@@ -133,4 +159,94 @@ def get_donor_contact(
         latitude=float(donor.latitude),
         longitude=float(donor.longitude),
         response_status=match.response_status,
+    )
+
+
+@router.post("/{match_id}/confirm-completion", response_model=MatchCompletionStatusResponse)
+def confirm_match_completion(
+    match_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Two-Sided Completion Confirmation & Automatic 90-Day Cooldown:
+    - Donor calling it sets donor_confirmed_completion = True
+    - Recipient calling it sets recipient_confirmed_completion = True
+    - When both are True:
+      1. match marks COMPLETED and request marks COMPLETED
+      2. donor.total_donations increments by 1
+      3. donor.last_donation_date updates to date.today()
+      4. donor placed in 90-day cooldown (is_available = False)
+      5. Donor concurrency lock released
+    """
+    match = (
+        db.query(DonorMatch)
+        .options(
+            joinedload(DonorMatch.donor).joinedload(Donor.user),
+            joinedload(DonorMatch.blood_request),
+        )
+        .filter(DonorMatch.match_id == match_id)
+        .first()
+    )
+    if not match:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Match record not found.",
+        )
+
+    is_donor = (match.donor_id == current_user.user_id)
+    is_recipient = (match.blood_request and match.blood_request.recipient_id == current_user.user_id)
+    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
+
+    if not (is_donor or is_recipient or is_admin):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the participating donor, recipient, or admin can confirm completion.",
+        )
+
+    if is_donor:
+        match.donor_confirmed_completion = True
+    if is_recipient:
+        match.recipient_confirmed_completion = True
+    if is_admin:
+        match.donor_confirmed_completion = True
+        match.recipient_confirmed_completion = True
+
+    is_mutually_completed = bool(match.donor_confirmed_completion and match.recipient_confirmed_completion)
+    cooldown_until = None
+
+    if is_mutually_completed:
+        now_dt = datetime.utcnow()
+        match.response_status = MatchResponseStatus.COMPLETED
+        match.completed_at = now_dt
+        if match.blood_request:
+            match.blood_request.status = RequestStatus.COMPLETED
+
+        donor = match.donor
+        if donor:
+            donor.total_donations = (donor.total_donations or 0) + 1
+            donor.last_donation_date = date.today()
+            donor.availability_status = AvailabilityStatus.UNAVAILABLE
+
+        cooldown_until = now_dt + timedelta(days=90)
+
+        log_system_action(
+            db=db,
+            action="DONATION_MUTUALLY_COMPLETED",
+            entity="donor_match",
+            entity_id=match.match_id,
+            user_id=current_user.user_id,
+        )
+
+    db.commit()
+    db.refresh(match)
+
+    return MatchCompletionStatusResponse(
+        match_id=match.match_id,
+        request_id=match.request_id,
+        status=match.response_status,
+        donor_confirmed_completion=match.donor_confirmed_completion,
+        recipient_confirmed_completion=match.recipient_confirmed_completion,
+        is_completed=is_mutually_completed,
+        completed_at=match.completed_at,
+        cooldown_until=cooldown_until,
     )

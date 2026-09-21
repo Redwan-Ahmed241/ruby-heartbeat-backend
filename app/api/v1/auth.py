@@ -50,6 +50,7 @@ def register(request_data: UserRegisterRequest, request: Request, db: Session = 
         password_hash=hash_password(request_data.password),
         role=target_role,
         status=UserStatus.ACTIVE,
+        nid_or_birth_cert=request_data.nid_or_birth_cert,
     )
     db.add(new_user)
     db.flush()

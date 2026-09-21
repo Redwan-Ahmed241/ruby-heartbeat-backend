@@ -74,6 +74,7 @@ class UserRegisterRequest(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     nid_passport_no: Optional[str] = Field(default=None, max_length=50)
+    nid_or_birth_cert: Optional[str] = Field(default=None, max_length=50)
 
     # Role-specific profiles (retained for backward compatibility)
     donor_profile: Optional[DonorProfileCreate] = None
@@ -127,6 +128,7 @@ class UserBase(BaseModel):
     status: UserStatus
     created_at: datetime
     updated_at: datetime
+    nid_or_birth_cert: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
