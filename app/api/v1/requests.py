@@ -486,6 +486,10 @@ def accept_blood_request(
     # 4. Set status and accepted donor
     req.status = RequestStatus.ACCEPTED
     req.accepted_donor_id = current_user.user_id
+    if req.matches:
+        for m in req.matches:
+            if m.donor_id == current_user.user_id:
+                m.response_status = MatchResponseStatus.ACCEPTED
 
     # 5. Dispatch transactional email alert to recipient
     recipient_user = req.recipient.user if req.recipient and req.recipient.user else None
@@ -683,7 +687,10 @@ def reopen_blood_request(
 
     is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
     is_owner = (req.recipient_id == current_user.user_id)
-    is_accepted_donor = (req.accepted_donor_id == current_user.user_id)
+    is_accepted_donor = (
+        req.accepted_donor_id == current_user.user_id
+        or any(m.donor_id == current_user.user_id and m.response_status == MatchResponseStatus.ACCEPTED for m in req.matches)
+    )
 
     if not (is_admin or is_owner or is_accepted_donor):
         raise HTTPException(
@@ -717,10 +724,9 @@ def reopen_blood_request(
     reason = payload.reason if payload and payload.reason else None
 
     # 2. Reset match for released donor to DECLINED
-    if req.accepted_donor_id:
-        for match in req.matches:
-            if match.donor_id == req.accepted_donor_id:
-                match.response_status = MatchResponseStatus.DECLINED
+    for match in req.matches:
+        if match.response_status == MatchResponseStatus.ACCEPTED or (req.accepted_donor_id and match.donor_id == req.accepted_donor_id):
+            match.response_status = MatchResponseStatus.DECLINED
 
     # 3. Ensure released donor remains AVAILABLE and has ZERO cooldown penalty
     if released_donor:
@@ -849,7 +855,10 @@ def update_request_status(
 
     is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
     is_owner = (req.recipient_id == current_user.user_id)
-    is_accepted_donor = (req.accepted_donor_id == current_user.user_id)
+    is_accepted_donor = (
+        req.accepted_donor_id == current_user.user_id
+        or any(m.donor_id == current_user.user_id and m.response_status == MatchResponseStatus.ACCEPTED for m in req.matches)
+    )
 
     # Permission check
     if not (is_admin or is_owner or is_accepted_donor):
@@ -944,10 +953,10 @@ def cancel_blood_request(
     # Transition state to CANCELLED
     req.status = RequestStatus.CANCELLED
 
-    # Release all linked candidate matches: update all associated donor_matches where status == 'PENDING' to 'CANCELLED'
+    # Release all linked candidate matches: update all associated donor_matches where status == 'PENDING' or 'ACCEPTED' to 'CANCELLED'
     if req.matches:
         for match in req.matches:
-            if match.response_status == MatchResponseStatus.PENDING:
+            if match.response_status in [MatchResponseStatus.PENDING, MatchResponseStatus.ACCEPTED]:
                 match.response_status = MatchResponseStatus.CANCELLED
 
     log_system_action(

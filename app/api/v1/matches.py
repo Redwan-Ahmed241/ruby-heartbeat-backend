@@ -54,7 +54,6 @@ def respond_to_match(
                 DonorMatch.match_id != match_id,
                 DonorMatch.response_status == MatchResponseStatus.ACCEPTED,
                 BloodRequest.status.in_([
-                    RequestStatus.OPEN,
                     RequestStatus.MATCHED,
                     RequestStatus.PROCESSING,
                     RequestStatus.ACCEPTED,
@@ -70,11 +69,28 @@ def respond_to_match(
 
     match.response_status = response_data.response
 
-    # If accepted, update request status
+    # If accepted, update request status and assign accepted_donor_id
     if response_data.response == MatchResponseStatus.ACCEPTED:
         req = db.query(BloodRequest).filter(BloodRequest.request_id == match.request_id).first()
         if req:
             req.status = RequestStatus.MATCHED
+            req.accepted_donor_id = current_user.user_id
+    elif response_data.response in [MatchResponseStatus.DECLINED, MatchResponseStatus.CANCELLED]:
+        req = db.query(BloodRequest).filter(BloodRequest.request_id == match.request_id).first()
+        if req and (req.accepted_donor_id == current_user.user_id or req.status == RequestStatus.MATCHED):
+            other_accepted = (
+                db.query(DonorMatch)
+                .filter(
+                    DonorMatch.request_id == req.request_id,
+                    DonorMatch.match_id != match.match_id,
+                    DonorMatch.response_status == MatchResponseStatus.ACCEPTED,
+                )
+                .first()
+            )
+            if not other_accepted:
+                req.accepted_donor_id = None
+                if req.status in [RequestStatus.MATCHED, RequestStatus.ACCEPTED]:
+                    req.status = RequestStatus.OPEN
 
     log_system_action(
         db=db,
