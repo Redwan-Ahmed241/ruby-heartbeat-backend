@@ -1521,3 +1521,194 @@ def test_phase9_urgent_feed_pinning_and_unified_dashboard_queries():
 
 
 
+
+
+
+def test_requester_cannot_match_or_receive_own_request_alert():
+    """Verify that a user who is an active, available donor matching blood/location
+    NEVER matches with their own blood request and receives zero alerts."""
+    unique = str(uuid.uuid4())[:8]
+    user_email = f"selfmatch_{unique}@example.com"
+
+    # 1. Create a user (User A) who is an active, available donor with blood group O+
+    reg_res = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": f"User A {unique}",
+            "email": user_email,
+            "phone": "+8801711998877",
+            "password": "Password123!",
+            "blood_group": "O_POSITIVE",
+            "date_of_birth": "1998-05-15",
+            "gender": "Male",
+            "weight": 70.0,
+            "address": "Dhanmondi, Dhaka",
+            "latitude": 23.7461,
+            "longitude": 90.3742,
+        },
+    )
+    assert reg_res.status_code == 201
+    user_a = reg_res.json()
+    user_a_id = user_a["user_id"]
+    donor_id = user_a["donor"]["donor_id"]
+
+    # Login User A
+    login_res = client.post(
+        "/api/v1/auth/login",
+        json={"email": user_email, "password": "Password123!"},
+    )
+    assert login_res.status_code == 200
+    token = login_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Ensure User A is available
+    avail_res = client.patch(
+        "/api/v1/donors/availability",
+        headers=headers,
+        json={"availability_status": "AVAILABLE"},
+    )
+    assert avail_res.status_code == 200
+
+    # 2. With User A authenticated, submit an emergency blood request for O+ at a hospital in their exact zone
+    req_res = client.post(
+        "/api/v1/requests/emergency",
+        headers=headers,
+        json={
+            "blood_group": "O_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 1.0,
+            "urgency": "EMERGENCY",
+            "required_location": "Dhanmondi Central Hospital, Dhaka",
+            "latitude": 23.7461,
+            "longitude": 90.3742,
+            "notes": "Emergency blood test for self-match exclusion",
+        },
+    )
+    assert req_res.status_code == 201
+    req_data = req_res.json()
+    request_id = req_data["request_id"]
+
+    # 3. Query GET /api/v1/requests/{request_id}/matches
+    matches_res = client.get(f"/api/v1/requests/{request_id}/matches", headers=headers)
+    assert matches_res.status_code == 200
+    matches = matches_res.json()
+
+    # 4. Assert: User A's donor_id is NOT in the candidate matches list
+    matched_donor_ids = [str(m["donor_id"]) for m in matches]
+    assert str(donor_id) not in matched_donor_ids
+    assert str(user_a_id) not in matched_donor_ids
+
+    # 5. Query GET /api/v1/notifications/my-notifications for User A
+    notif_res = client.get("/api/v1/notifications/my-notifications", headers=headers)
+    assert notif_res.status_code == 200
+    user_notifs = notif_res.json()
+
+    # 6. Assert: Zero alerts were created for User A regarding their own request
+    own_request_alerts = [n for n in user_notifs if n.get("request_id") == str(request_id)]
+    assert len(own_request_alerts) == 0
+
+
+def test_donation_completion_increments_count_and_returns_updated():
+    """Verify that confirming a match completion increments donor total_donations
+    and returns the updated count in /donors/me and /auth/me."""
+    u_suffix = str(uuid.uuid4())[:8]
+    donor_email = f"tier_donor_{u_suffix}@example.com"
+    recip_email = f"tier_recip_{u_suffix}@example.com"
+
+    # Register donor
+    d_reg = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Tier Test Donor",
+            "email": donor_email,
+            "phone": "+8801711223344",
+            "password": "Password123!",
+            "blood_group": "A_POSITIVE",
+            "date_of_birth": "1997-04-12",
+            "gender": "Male",
+            "weight": 72.0,
+            "address": "Gulshan, Dhaka",
+            "latitude": 23.7925,
+            "longitude": 90.4078,
+        },
+    )
+    assert d_reg.status_code == 201
+
+    # Register recipient
+    r_reg = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Tier Test Recipient",
+            "email": recip_email,
+            "phone": "+8801711223355",
+            "password": "Password123!",
+            "blood_group": "A_POSITIVE",
+            "date_of_birth": "1995-02-10",
+            "gender": "Female",
+            "weight": 55.0,
+            "address": "Gulshan, Dhaka",
+            "latitude": 23.7925,
+            "longitude": 90.4078,
+        },
+    )
+    assert r_reg.status_code == 201
+
+    d_token = client.post("/api/v1/auth/login", json={"email": donor_email, "password": "Password123!"}).json()["access_token"]
+    r_token = client.post("/api/v1/auth/login", json={"email": recip_email, "password": "Password123!"}).json()["access_token"]
+    d_headers = {"Authorization": f"Bearer {d_token}"}
+    r_headers = {"Authorization": f"Bearer {r_token}"}
+
+    # Verify initial total_donations is 0
+    d_profile = client.get("/api/v1/donors/me", headers=d_headers).json()
+    assert d_profile.get("total_donations", 0) == 0
+
+    d_auth_me = client.get("/api/v1/auth/me", headers=d_headers).json()
+    assert d_auth_me["donor"].get("total_donations", 0) == 0
+
+    # Recipient creates request
+    req_res = client.post(
+        "/api/v1/requests/",
+        headers=r_headers,
+        json={
+            "blood_group": "A_POSITIVE",
+            "component_type": "WHOLE_BLOOD",
+            "quantity": 1.0,
+            "urgency": "URGENT",
+            "required_location": "United Hospital, Gulshan",
+            "latitude": 23.7925,
+            "longitude": 90.4078,
+        },
+    )
+    assert req_res.status_code == 201
+    request_id = req_res.json()["request_id"]
+
+    # Match donor
+    donor_user_id = d_reg.json()["user_id"]
+    matches = client.get(f"/api/v1/requests/{request_id}/matches", headers=r_headers).json()
+    assert len(matches) >= 1
+    donor_matches = [m for m in matches if str(m["donor_id"]) == str(donor_user_id)]
+    assert len(donor_matches) >= 1
+    match_id = donor_matches[0]["match_id"]
+
+    # Donor accepts
+    resp_res = client.post(
+        f"/api/v1/matches/{match_id}/respond",
+        headers=d_headers,
+        json={"response": "ACCEPTED"},
+    )
+    assert resp_res.status_code == 200
+
+    # Mutual completion
+    d_confirm = client.post(f"/api/v1/matches/{match_id}/confirm-completion", headers=d_headers)
+    assert d_confirm.status_code == 200
+
+    r_confirm = client.post(f"/api/v1/matches/{match_id}/confirm-completion", headers=r_headers)
+    assert r_confirm.status_code == 200
+    assert r_confirm.json()["is_completed"] is True
+
+    # Check updated total_donations
+    d_profile_after = client.get("/api/v1/donors/me", headers=d_headers).json()
+    assert d_profile_after.get("total_donations") == 1
+
+    d_auth_after = client.get("/api/v1/auth/me", headers=d_headers).json()
+    assert d_auth_after["donor"].get("total_donations") == 1
