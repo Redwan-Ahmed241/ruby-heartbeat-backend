@@ -218,7 +218,7 @@ def get_donation_history(
 
     # Also capture completed matches
     completed_matches = (
-        db.query(DonorMatch)
+        db.query(DonorMatch, BloodRequest)
         .join(BloodRequest, BloodRequest.request_id == DonorMatch.request_id)
         .filter(
             DonorMatch.donor_id == donor.donor_id,
@@ -226,8 +226,7 @@ def get_donation_history(
         )
         .all()
     )
-    for m in completed_matches:
-        req = m.request
+    for m, req in completed_matches:
         d_date = m.completed_at.date() if m.completed_at else (req.request_date.date() if req.request_date else date.today())
         if d_date not in seen_dates:
             seen_dates.add(d_date)
