@@ -60,6 +60,9 @@ class DonationHistoryResponse(BaseModel):
     center_name: str
     notes: Optional[str]
     created_at: Optional[datetime]
+    completed_at: Optional[datetime] = None
+    units_donated: Optional[float] = None
+    facility_name: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

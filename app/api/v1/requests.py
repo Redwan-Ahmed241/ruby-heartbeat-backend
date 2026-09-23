@@ -395,6 +395,32 @@ def list_blood_requests(
     ]
 
 
+@router.get("/my-requests", response_model=List[BloodRequestResponse])
+def get_my_requests(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    """Retrieve all requests created by or accepted by the authenticated user."""
+    query = (
+        db.query(BloodRequest)
+        .options(
+            joinedload(BloodRequest.matches).joinedload(DonorMatch.donor).joinedload(Donor.user),
+            joinedload(BloodRequest.accepted_donor).joinedload(User.donor),
+        )
+        .filter(
+            (BloodRequest.recipient_id == current_user.user_id)
+            | (BloodRequest.accepted_donor_id == current_user.user_id)
+        )
+        .order_by(BloodRequest.request_date.desc())
+    )
+    requests = query.all()
+    is_admin = current_user.role in [UserRole.SYSTEM_ADMIN, UserRole.HOSPITAL_ADMIN]
+    return [
+        format_blood_request_response(req, viewer_user_id=current_user.user_id, is_admin=is_admin)
+        for req in requests
+    ]
+
+
 @router.get("/{request_id}", response_model=BloodRequestResponse)
 def get_blood_request(
     request_id: UUID,

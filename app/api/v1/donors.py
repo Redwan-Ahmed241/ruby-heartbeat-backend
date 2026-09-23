@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.database import get_db
 from app.core.enums import UserRole, BloodGroup, AvailabilityStatus, UserStatus
 from app.models.user import User, Donor, MedicalInfo, DonationHistory
+from app.models.request import BloodRequest, DonorMatch
+from app.core.enums import MatchResponseStatus, RequestStatus
 from app.schemas.donor import (
     DonorResponse,
     DonorProfileUpdate,
@@ -184,15 +186,71 @@ def get_donation_history(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db),
 ):
-    """Fetch donor's historical donation log."""
+    """Fetch donor's historical donation log including completed matches."""
     donor = get_or_create_donor(db, current_user)
-    history = (
+    history_records = (
         db.query(DonationHistory)
         .filter(DonationHistory.donor_id == donor.donor_id)
         .order_by(DonationHistory.donation_date.desc())
         .all()
     )
-    return history
+
+    results: List[DonationHistoryResponse] = []
+    seen_dates = set()
+    for h in history_records:
+        seen_dates.add(h.donation_date)
+        results.append(
+            DonationHistoryResponse(
+                history_id=h.history_id,
+                donor_id=h.donor_id,
+                donation_date=h.donation_date,
+                component_type=h.component_type,
+                quantity=float(h.quantity),
+                hemoglobin_level=float(h.hemoglobin_level),
+                center_name=h.center_name,
+                notes=h.notes,
+                created_at=h.created_at,
+                completed_at=h.created_at,
+                units_donated=float(h.quantity),
+                facility_name=h.center_name,
+            )
+        )
+
+    # Also capture completed matches
+    completed_matches = (
+        db.query(DonorMatch)
+        .join(BloodRequest, BloodRequest.request_id == DonorMatch.request_id)
+        .filter(
+            DonorMatch.donor_id == donor.donor_id,
+            BloodRequest.status == RequestStatus.COMPLETED,
+        )
+        .all()
+    )
+    for m in completed_matches:
+        req = m.request
+        d_date = m.completed_at.date() if m.completed_at else (req.request_date.date() if req.request_date else date.today())
+        if d_date not in seen_dates:
+            seen_dates.add(d_date)
+            fac_name = req.hospital_name or req.required_location or "Transfusion Facility"
+            results.append(
+                DonationHistoryResponse(
+                    history_id=m.match_id,
+                    donor_id=donor.donor_id,
+                    donation_date=d_date,
+                    component_type=req.component_type,
+                    quantity=float(req.quantity),
+                    hemoglobin_level=13.5,
+                    center_name=fac_name,
+                    notes=f"Completed donation for request #{str(req.request_id)[:8].upper()}",
+                    created_at=req.request_date,
+                    completed_at=m.completed_at or req.request_date,
+                    units_donated=float(req.quantity),
+                    facility_name=fac_name,
+                )
+            )
+
+    results.sort(key=lambda r: r.donation_date, reverse=True)
+    return results
 
 
 @router.post("/history", response_model=DonationHistoryResponse, status_code=status.HTTP_201_CREATED)

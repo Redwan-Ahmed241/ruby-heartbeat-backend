@@ -129,6 +129,7 @@ class UserBase(BaseModel):
     created_at: datetime
     updated_at: datetime
     nid_or_birth_cert: Optional[str] = None
+    backup_phone: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -137,3 +138,13 @@ class UserResponse(UserBase):
     donor: Optional[DonorBriefResponse] = None
     recipient: Optional[RecipientBriefResponse] = None
     hospital: Optional[HospitalBriefResponse] = None
+
+
+class UserProfileUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=2, max_length=100)
+    phone: Optional[str] = Field(None, min_length=6, max_length=20)
+    backup_phone: Optional[str] = Field(None, max_length=20)
+    address: Optional[str] = Field(None, max_length=255)
+    location_zone: Optional[str] = None
+    blood_group: Optional[BloodGroup] = None
+    last_donation_date: Optional[date] = None

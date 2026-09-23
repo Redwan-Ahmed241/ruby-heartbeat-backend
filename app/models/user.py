@@ -32,6 +32,7 @@ class User(Base):
     full_name = Column(String(100), nullable=False)
     email = Column(String(100), unique=True, nullable=False, index=True)
     phone = Column(String(20), nullable=False)
+    backup_phone = Column(String(20), nullable=True, default=None)
     password_hash = Column(String(255), nullable=False)
     role = Column(SQLEnum(UserRole, name="user_role_enum"), nullable=False)
     status = Column(SQLEnum(UserStatus, name="user_status_enum"), default=UserStatus.ACTIVE, nullable=False)
