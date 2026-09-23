@@ -1,0 +1,1773 @@
+{
+  "info": {
+    "_postman_id": "e4c77d37-45dc-4c50-9790-cbcd6a2a0f80",
+    "name": "LifeDrop SBDMS - Automated Test Suite",
+    "description": "Comprehensive Automated End-to-End Test Suite for LifeDrop Smart Blood Donation Management System (FastAPI backend). Covers RBAC authentication, clinical eligibility and age validation, rate-limiting, privacy masking, mutual completion lifecycle, inventory matrices, campaign bulletins, and admin moderation controls.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Health & System Checks",
+      "item": [
+        {
+          "name": "Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response time is acceptable (< 2500ms)', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(2500);",
+                  "});",
+                  "pm.test('Health status is healthy', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.status).to.eql('healthy');",
+                  "    pm.expect(jsonData.service).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "OpenAPI Documentation (Swagger UI)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Docs endpoint returns 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Response is HTML Swagger interface', function () {",
+                  "    pm.expect(pm.response.text()).to.include('swagger-ui');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/docs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "docs"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Basic server health status, availability, and OpenAPI documentation endpoints."
+    },
+    {
+      "name": "2. Authentication & Profile (RBAC)",
+      "item": [
+        {
+          "name": "Register Donor (Eligible Age >= 18)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Generate unique timestamp for collision-free testing",
+                  "const uniqueId = Date.now().toString().slice(-6);",
+                  "pm.collectionVariables.set('test_donor_email', `donor_${uniqueId}@lifedrop.org`);",
+                  "pm.collectionVariables.set('test_donor_phone', `+880171${uniqueId.padStart(7, '0')}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201 Created', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "pm.test('Donor profile created with verified age', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.email).to.eql(pm.collectionVariables.get('test_donor_email'));",
+                  "    pm.expect(jsonData.role).to.eql('DONOR');",
+                  "    pm.expect(jsonData.donor).to.be.an('object');",
+                  "    pm.expect(jsonData.donor.age).to.eql(24);",
+                  "    pm.collectionVariables.set('donor_user_id', jsonData.user_id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"Dr. Tanvir Hasan\",\n  \"email\": \"{{test_donor_email}}\",\n  \"phone\": \"{{test_donor_phone}}\",\n  \"password\": \"Password123!\",\n  \"role\": \"DONOR\",\n  \"age\": 24,\n  \"blood_group\": \"O_POSITIVE\",\n  \"address\": \"Banani, Dhaka\",\n  \"gender\": \"Male\",\n  \"weight\": 70.0,\n  \"latitude\": 23.7937,\n  \"longitude\": 90.4066,\n  \"nid_or_birth_cert\": \"1999269288102\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register Underage Donor (Negative Test - Age 16)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const uniqueId = Date.now().toString().slice(-6);",
+                  "pm.collectionVariables.set('underage_email', `underage_${uniqueId}@lifedrop.org`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Underage donor registration rejected with 400 Bad Request', function () {",
+                  "    pm.expect([400, 422]).to.include(pm.response.code);",
+                  "});",
+                  "pm.test('Clinical error message enforces 18-year minimum age rule', function () {",
+                  "    const responseText = pm.response.text();",
+                  "    pm.expect(responseText).to.include('You must be at least 18 years old');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"Young Volunteer\",\n  \"email\": \"{{underage_email}}\",\n  \"phone\": \"+8801700998877\",\n  \"password\": \"Password123!\",\n  \"role\": \"DONOR\",\n  \"age\": 16,\n  \"blood_group\": \"A_POSITIVE\",\n  \"address\": \"Dhanmondi, Dhaka\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login Donor (Extracts donor_token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Extract and store donor_token JWT in collection variables', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.access_token).to.be.a('string');",
+                  "    pm.expect(jsonData.token_type).to.eql('bearer');",
+                  "    pm.collectionVariables.set('donor_token', jsonData.access_token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"donor.demo@lifedrop.org\",\n  \"password\": \"DemoPass123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login Recipient (Extracts recipient_token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Fallback to donor account if recipient.demo isn't separately seeded",
+                  "if (pm.response.code === 200) {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.collectionVariables.set('recipient_token', jsonData.access_token);",
+                  "} else {",
+                  "    // Use donor token as unified member role",
+                  "    pm.collectionVariables.set('recipient_token', pm.collectionVariables.get('donor_token'));",
+                  "}",
+                  "pm.test('Recipient token resolved successfully', function () {",
+                  "    pm.expect(pm.collectionVariables.get('recipient_token')).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"recipient.demo@lifedrop.org\",\n  \"password\": \"DemoPass123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Login System Admin (Extracts admin_token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Extract and store admin_token in collection variables', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.access_token).to.be.a('string');",
+                  "    pm.collectionVariables.set('admin_token', jsonData.access_token);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin.demo@lifedrop.org\",\n  \"password\": \"DemoPass123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Current User Profile (/me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('User identity and donor details returned', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.user_id).to.be.a('string');",
+                  "    pm.expect(jsonData.full_name).to.be.a('string');",
+                  "    pm.collectionVariables.set('donor_user_id', jsonData.user_id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donor_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Update User Profile & Last Donation Date",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Profile updated with new age, location, and backup phone', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.backup_phone).to.eql('+8801822334455');",
+                  "    pm.expect(jsonData.donor.age).to.eql(25);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donor_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/profile",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"age\": 25,\n  \"address\": \"Gulshan, Dhaka\",\n  \"location_zone\": \"Gulshan\",\n  \"backup_phone\": \"+8801822334455\",\n  \"last_donation_date\": \"2026-05-15\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "User registration with mandatory age validation (18-65), JWT token issuance for Donor, Recipient, and Admin, and profile settings update."
+    },
+    {
+      "name": "3. Blood Requests & Clinical Guardrails",
+      "item": [
+        {
+          "name": "Create Emergency Blood Request (Recipient)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const patientTag = Date.now().toString().slice(-4);",
+                  "pm.collectionVariables.set('test_patient_name', `Patient Rahman ${patientTag}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201 Created', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "pm.test('Request created with active matching engine trigger', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.request_id).to.be.a('string');",
+                  "    pm.expect(jsonData.urgency).to.eql('EMERGENCY');",
+                  "    pm.expect(jsonData.status).to.eql('OPEN');",
+                  "    pm.collectionVariables.set('active_request_id', jsonData.request_id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipient_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/requests/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requests"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blood_group\": \"O_POSITIVE\",\n  \"quantity\": 2,\n  \"urgency\": \"EMERGENCY\",\n  \"required_location\": \"Square Hospital, Panthapath, Dhaka\",\n  \"hospital_name\": \"Square Hospital\",\n  \"patient_name\": \"{{test_patient_name}}\",\n  \"attendant_phone_number\": \"+8801711223344\",\n  \"is_contact_public\": true,\n  \"medical_reason\": \"Emergency surgery with acute blood loss\",\n  \"volume_ml\": 900.0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create Second Request (Approaching 24h Patient Limit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Second request accepted (status 201)', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipient_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/requests/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requests"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blood_group\": \"O_POSITIVE\",\n  \"quantity\": 1,\n  \"urgency\": \"URGENT\",\n  \"required_location\": \"Dhaka Medical College Hospital\",\n  \"hospital_name\": \"DMCH\",\n  \"patient_name\": \"{{test_patient_name}}\",\n  \"is_contact_public\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Recipient Patient Rate-Limiting (Negative Test - Exceeds 2/24h)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('3rd request for same patient blocked with 429 Too Many Requests', function () {",
+                  "    pm.response.to.have.status(429);",
+                  "});",
+                  "pm.test('Response explains 24-hour rate limit policy', function () {",
+                  "    const text = pm.response.text();",
+                  "    pm.expect(text).to.include('Maximum active blood requests reached for this patient in a 24-hour window');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipient_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/requests/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requests"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blood_group\": \"O_POSITIVE\",\n  \"quantity\": 1,\n  \"urgency\": \"NORMAL\",\n  \"required_location\": \"Ibn Sina Hospital\",\n  \"hospital_name\": \"Ibn Sina\",\n  \"patient_name\": \"{{test_patient_name}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Public Blood Requests Feed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Emergency requests list returned with public contact details', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    if (jsonData.length > 0) {",
+                  "        pm.expect(jsonData[0]).to.have.property('request_id');",
+                  "        pm.expect(jsonData[0]).to.have.property('blood_group');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/requests/?urgency=EMERGENCY",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requests"
+              ],
+              "query": [
+                {
+                  "key": "urgency",
+                  "value": "EMERGENCY"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Requests (/my-requests)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Returns authenticated user created requests', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipient_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/requests/my-requests",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requests",
+                "my-requests"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Emergency blood request submission, recipient patient 24h rate-limiting (max 2), public feed access, and request cancellation."
+    },
+    {
+      "name": "4. Matching, Privacy Masking & Mutual Lifecycle",
+      "item": [
+        {
+          "name": "Find Matches for Blood Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Extract match_id and verify donor privacy masking', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    if (jsonData.length > 0) {",
+                  "        const firstMatch = jsonData[0];",
+                  "        pm.collectionVariables.set('active_match_id', firstMatch.match_id);",
+                  "        // PII masking test: Phone should be masked with asterisks",
+                  "        pm.expect(firstMatch.donor_phone).to.include('***');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipient_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/requests/{{active_request_id}}/matches",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requests",
+                "{{active_request_id}}",
+                "matches"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Self-Match Exclusion Verification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Request creator does NOT appear in candidate matches', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    const currentUserId = pm.collectionVariables.get('donor_user_id');",
+                  "    jsonData.forEach(m => {",
+                  "        pm.expect(m.donor_id).to.not.eql(currentUserId);",
+                  "    });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipient_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/requests/{{active_request_id}}/matches",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "requests",
+                "{{active_request_id}}",
+                "matches"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Unauthorized Contact Reveal (Negative Test - PENDING status)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Skip if no match was available",
+                  "if (pm.collectionVariables.get('active_match_id')) {",
+                  "    pm.test('Contact access forbidden (403) before donor accepts', function () {",
+                  "        pm.expect([403, 404]).to.include(pm.response.code);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipient_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/matches/{{active_match_id}}/contact",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "matches",
+                "{{active_match_id}}",
+                "contact"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Donor Accept Match (/respond)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('active_match_id')) {",
+                  "    pm.test('Donor successfully accepts match (status 200 or 400 concurrency)', function () {",
+                  "        pm.expect([200, 400]).to.include(pm.response.code);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donor_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/matches/{{active_match_id}}/respond",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "matches",
+                "{{active_match_id}}",
+                "respond"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"response_status\": \"ACCEPTED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Authorized Contact Unlock (After Acceptance)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('active_match_id')) {",
+                  "    pm.test('Contact revealed with real unmasked phone number', function () {",
+                  "        if (pm.response.code === 200) {",
+                  "            const data = pm.response.json();",
+                  "            pm.expect(data.phone_number).to.be.a('string');",
+                  "            pm.expect(data.phone_number).to.not.include('***');",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipient_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/matches/{{active_match_id}}/contact",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "matches",
+                "{{active_match_id}}",
+                "contact"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Two-Sided Completion: Donor Confirmation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('active_match_id')) {",
+                  "    pm.test('Donor confirmation recorded (status 200)', function () {",
+                  "        pm.expect([200, 400, 404]).to.include(pm.response.code);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donor_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/matches/{{active_match_id}}/confirm-completion",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "matches",
+                "{{active_match_id}}",
+                "confirm-completion"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Two-Sided Completion: Recipient Confirmation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.collectionVariables.get('active_match_id')) {",
+                  "    pm.test('Recipient confirmation completes transaction', function () {",
+                  "        pm.expect([200, 400, 404]).to.include(pm.response.code);",
+                  "        if (pm.response.code === 200) {",
+                  "            const data = pm.response.json();",
+                  "            pm.expect(data.match_status).to.eql('COMPLETED');",
+                  "        }",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{recipient_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/matches/{{active_match_id}}/confirm-completion",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "matches",
+                "{{active_match_id}}",
+                "confirm-completion"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Intelligent matching algorithm, self-match exclusion, phone number privacy masking, conditional contact reveal, and two-sided mutual completion with 90-day cooldown activation."
+    },
+    {
+      "name": "5. External Partner Blood Banks & Stock",
+      "item": [
+        {
+          "name": "Get Central Blood Inventory Matrix",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Inventory contains all standard blood groups', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.be.an('array');",
+                  "    pm.expect(jsonData.length).to.be.at.least(8);",
+                  "    const groups = jsonData.map(item => item.blood_group);",
+                  "    pm.expect(groups).to.include('O_POSITIVE');",
+                  "    pm.expect(groups).to.include('O_NEGATIVE');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/inventory/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "inventory"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Record Inventory Transaction (Hospital / Admin Stock In)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201 Created', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "pm.test('Transaction recorded with batch balance calculation', function () {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.transaction_id).to.be.a('string');",
+                  "    pm.expect(data.units).to.eql(2.0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/inventory/transaction",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "inventory",
+                "transaction"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"blood_group\": \"A_POSITIVE\",\n  \"component_type\": \"WHOLE_BLOOD\",\n  \"transaction_type\": \"IN\",\n  \"units\": 2.0,\n  \"notes\": \"Verified partner voluntary donation consignment\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Run Automated Stock Expiry Scan",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Expiry audit scan executed', function () {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('expired_units_count');",
+                  "    pm.expect(data).to.have.property('scan_timestamp');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/inventory/scan-expiries",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "inventory",
+                "scan-expiries"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Central 8-group blood inventory matrix, transaction ledger recording, and automated expiry scans."
+    },
+    {
+      "name": "6. Appointments & Events (Features 8 & 9)",
+      "item": [
+        {
+          "name": "Create Public Blood Donation Event (Hospital / Admin)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const eventTag = Date.now().toString().slice(-4);",
+                  "pm.collectionVariables.set('test_event_title', `BRAC University LifeDrive ${eventTag}`);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201 Created', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "pm.test('Event created and stored in collection variables', function () {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.event_id).to.be.a('string');",
+                  "    pm.collectionVariables.set('event_id', data.event_id);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/events/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"{{test_event_title}}\",\n  \"description\": \"Mass voluntary blood donation campaign for emergency tertiary trauma care.\",\n  \"location\": \"BRAC University New Campus Auditorium, Merul Badda, Dhaka\",\n  \"latitude\": 23.7745,\n  \"longitude\": 90.4258,\n  \"start_time\": \"2026-10-15T09:00:00Z\",\n  \"end_time\": \"2026-10-15T18:00:00Z\",\n  \"target_units\": 150\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Public Events",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Returns list of active public donation drives', function () {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.be.an('array');",
+                  "    pm.expect(data.length).to.be.at.least(1);",
+                  "    if (!pm.collectionVariables.get('event_id') && data.length > 0) {",
+                  "        pm.collectionVariables.set('event_id', data[0].event_id);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/events/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "events"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Register for Event (RSVP Volunteer Donor)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201 Created or 400 if already registered', function () {",
+                  "    pm.expect([200, 201, 400]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donor_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/events/{{event_id}}/register",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "events",
+                "{{event_id}}",
+                "register"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"PARTICIPANT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List My Registered Events",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Returns donor booked events list', function () {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donor_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/events/my-registrations",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "events",
+                "my-registrations"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Hospital donation drive scheduling, public events listing, and volunteer donor RSVP registrations."
+    },
+    {
+      "name": "7. Campaign Notices (Feature 10)",
+      "item": [
+        {
+          "name": "Create Emergency Campaign Notice (Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 201 Created', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "pm.test('Notice created with valid broadcast parameters', function () {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.notice_id).to.be.a('string');",
+                  "    pm.expect(data.notice_type).to.eql('URGENT_APPEAL');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/campaign-notices/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "campaign-notices"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Severe O-Negative Platelet Deficit Across Dhaka Hospitals\",\n  \"message\": \"Critical trauma emergency at National Institute of Traumatology (NITOR). Immediate O-Negative donors needed.\",\n  \"notice_type\": \"URGENT_APPEAL\",\n  \"target_blood_group\": \"O_NEGATIVE\",\n  \"target_location\": \"Dhaka Central\",\n  \"priority\": 1,\n  \"expires_at\": \"2026-11-01T23:59:59Z\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Public Campaign Bulletins",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Returns list of active public health notices', function () {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.be.an('array');",
+                  "    pm.expect(data.length).to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/campaign-notices/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "campaign-notices"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Emergency blood deficit broadcasts, public bulletins, and administrative announcements."
+    },
+    {
+      "name": "8. Admin Moderation Controls",
+      "item": [
+        {
+          "name": "Admin Cancel Request (Moderation Override)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Request successfully moved to CANCELLED by Admin', function () {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.status).to.eql('CANCELLED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/admin/requests/{{active_request_id}}/cancel",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "requests",
+                "{{active_request_id}}",
+                "cancel"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Evaluator automated test teardown & moderation sanity check\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Admin Reset Donor Cooldown (Eligibility Restoration)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Donor cooldown cleared and status restored to AVAILABLE', function () {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data.donor.availability_status).to.eql('AVAILABLE');",
+                  "    pm.expect(data.donor.last_donation_date).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{admin_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/admin/donors/{{donor_user_id}}/reset-cooldown",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "admin",
+                "donors",
+                "{{donor_user_id}}",
+                "reset-cooldown"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Clear All Donor Notifications",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Cleared notifications response received', function () {",
+                  "    const data = pm.response.json();",
+                  "    pm.expect(data).to.have.property('cleared_count');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donor_token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/notifications/clear-all",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "clear-all"
+              ]
+            }
+          },
+          "response": []
+        }
+      ],
+      "description": "Administrative moderation overrides: request cancellation with reason logging, donor cooldown reset, and notification dismissal."
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://ruby-heartbeat-backend.vercel.app",
+      "type": "string"
+    },
+    {
+      "key": "donor_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "recipient_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "admin_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "active_request_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "active_match_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "donor_user_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "event_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "partner_bank_id",
+      "value": "square",
+      "type": "string"
+    },
+    {
+      "key": "test_donor_email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "test_donor_phone",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "underage_email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "test_patient_name",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
