@@ -193,7 +193,7 @@ def test_admin_reset_cooldown_and_cancel_request():
 
     reset_res = client.post(f"/api/v1/admin/donors/{donor_user_id}/reset-cooldown", headers=headers_admin)
     assert reset_res.status_code == 200
-    assert reset_res.json()["status"] == "COOLDOWN_RESET_SUCCESS"
+    assert reset_res.json()["user_id"] == donor_user_id and reset_res.json()["donor"]["last_donation_date"] is None
 
     check_elig = client.get("/api/v1/donors/eligibility", headers=headers_d).json()
     assert check_elig["cooldown_active"] is False
@@ -202,3 +202,4 @@ def test_admin_reset_cooldown_and_cancel_request():
     cancel_res = client.post(f"/api/v1/admin/requests/{request_id}/cancel", headers=headers_admin, json={"reason": "Spam detected during verification"})
     assert cancel_res.status_code == 200
     assert cancel_res.json()["status"] == "CANCELLED"
+
