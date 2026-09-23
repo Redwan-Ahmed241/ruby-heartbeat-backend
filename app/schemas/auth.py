@@ -2,7 +2,7 @@
 from datetime import datetime, date
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from app.core.enums import UserRole, UserStatus, BloodGroup, AvailabilityStatus
 
 
@@ -30,7 +30,8 @@ class RefreshRequest(BaseModel):
 
 class DonorProfileCreate(BaseModel):
     blood_group: BloodGroup
-    date_of_birth: date
+    date_of_birth: Optional[date] = None
+    age: Optional[int] = None
     gender: str = Field(..., max_length=10)
     weight: float = Field(..., ge=20.0, le=300.0)
     address: str = Field(..., max_length=255)
@@ -64,6 +65,31 @@ class UserRegisterRequest(BaseModel):
     phone: str = Field(..., min_length=6, max_length=20)
     password: str = Field(..., min_length=6)
     role: Optional[UserRole] = UserRole.DONOR
+    age: Optional[int] = None
+
+    @field_validator("age")
+    @classmethod
+    def validate_donor_age(cls, v, info):
+        role = info.data.get("role")
+        role_str = getattr(role, "value", str(role)) if role is not None else None
+        if role_str == "DONOR" or role == UserRole.DONOR:
+            if v is None:
+                dob = info.data.get("date_of_birth")
+                dp = info.data.get("donor_profile")
+                dp_dob = getattr(dp, "date_of_birth", None) if dp else None
+                birth = dob or dp_dob
+                if birth:
+                    if isinstance(birth, str):
+                        birth = date.fromisoformat(birth)
+                    today = date.today()
+                    v = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+                else:
+                    raise ValueError("Age is required for blood donor registration.")
+            if v < 18:
+                raise ValueError("You must be at least 18 years old to register as a blood donor.")
+            if v > 65:
+                raise ValueError("Maximum eligible age for regular blood donation is 65 years.")
+        return v
 
     # Unified account profile fields (for single registration flow)
     blood_group: Optional[BloodGroup] = None
@@ -87,6 +113,7 @@ class DonorBriefResponse(BaseModel):
     donor_id: UUID
     blood_group: BloodGroup
     date_of_birth: date
+    age: Optional[int] = None
     gender: str
     weight: float
     address: str
@@ -145,6 +172,7 @@ class UserProfileUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=2, max_length=100)
     phone: Optional[str] = Field(None, min_length=6, max_length=20)
     backup_phone: Optional[str] = Field(None, max_length=20)
+    age: Optional[int] = Field(None, ge=18, le=65)
     address: Optional[str] = Field(None, max_length=255)
     location_zone: Optional[str] = None
     blood_group: Optional[BloodGroup] = None

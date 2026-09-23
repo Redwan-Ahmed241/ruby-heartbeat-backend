@@ -63,6 +63,7 @@ class Donor(Base):
     )
     blood_group = Column(SQLEnum(BloodGroup, name="blood_group_enum"), nullable=False, index=True)
     date_of_birth = Column(Date, nullable=False)
+    age = Column(Integer, nullable=True)
     gender = Column(String(10), nullable=False)
     weight = Column(Numeric(5, 2), nullable=False)
     address = Column(String(255), nullable=False)
@@ -84,6 +85,15 @@ class Donor(Base):
         onupdate=datetime.utcnow,
     )
 
+
+    @property
+    def computed_age(self) -> int | None:
+        if self.age is not None:
+            return self.age
+        if self.date_of_birth:
+            today = date.today()
+            return today.year - self.date_of_birth.year - ((today.month, today.day) < (self.date_of_birth.month, self.date_of_birth.day))
+        return None
 
     @property
     def is_available(self) -> bool:

@@ -113,10 +113,19 @@ def register(request_data: UserRegisterRequest, request: Request, db: Session = 
             else request_data.longitude if request_data.longitude is not None else 90.4125
         )
 
+        donor_age = request_data.age if request_data.age is not None else (dp.age if dp and dp.age is not None else None)
+        if donor_age is not None and not (dp and dp.date_of_birth) and not request_data.date_of_birth:
+            today = date.today()
+            donor_dob = date(today.year - donor_age, today.month, min(today.day, 28))
+        elif donor_age is None and donor_dob:
+            today = date.today()
+            donor_age = today.year - donor_dob.year - ((today.month, today.day) < (donor_dob.month, donor_dob.day))
+
         donor = Donor(
             donor_id=new_user.user_id,
             blood_group=donor_blood_group,
             date_of_birth=donor_dob,
+            age=donor_age,
             gender=donor_gender,
             weight=donor_weight,
             address=donor_address,

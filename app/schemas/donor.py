@@ -7,6 +7,7 @@ from app.core.enums import BloodGroup, ComponentType, AvailabilityStatus
 
 
 class DonorProfileUpdate(BaseModel):
+    age: Optional[int] = Field(None, ge=18, le=65)
     gender: Optional[str] = Field(None, max_length=10)
     weight: Optional[float] = Field(None, ge=20.0, le=300.0)
     address: Optional[str] = Field(None, max_length=255)
@@ -84,6 +85,7 @@ class DonorResponse(BaseModel):
     donor_id: UUID
     blood_group: BloodGroup
     date_of_birth: date
+    age: Optional[int] = None
     gender: str
     weight: float
     address: str

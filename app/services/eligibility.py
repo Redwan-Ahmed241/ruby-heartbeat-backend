@@ -58,11 +58,11 @@ def check_donor_eligibility(
     rejections: List[str] = []
     
     # 1. Age check (18 - 65)
-    age = calculate_age(donor.date_of_birth, today)
+    age = donor.age if getattr(donor, "age", None) is not None else calculate_age(donor.date_of_birth, today)
     if age < 18:
-        rejections.append(f"Donor is under 18 years old (current age: {age}).")
+        rejections.append("Underage: Must be at least 18 years old to donate blood.")
     elif age > 65:
-        rejections.append(f"Donor is over 65 years old (current age: {age}).")
+        rejections.append("Maximum eligible age for regular blood donation is 65 years.")
 
     # 2. Weight check (>= 50 kg)
     weight = float(donor.weight) if donor.weight is not None else 0.0

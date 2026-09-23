@@ -46,6 +46,7 @@ def get_or_create_donor(db: Session, current_user: User) -> Donor:
             donor_id=current_user.user_id,
             blood_group=BloodGroup.O_POSITIVE,
             date_of_birth=date(2000, 1, 1),
+            age=26,
             gender="Other",
             weight=65.0,
             address=addr,
@@ -87,6 +88,9 @@ def update_donor_profile(
 
     for field, value in profile_data.model_dump(exclude_unset=True).items():
         setattr(donor, field, value)
+        if field == "age" and value is not None:
+            today = date.today()
+            donor.date_of_birth = date(today.year - value, today.month, min(today.day, 28))
 
     log_system_action(
         db=db,

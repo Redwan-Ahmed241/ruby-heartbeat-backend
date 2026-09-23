@@ -3,7 +3,9 @@
 Configured for local execution and serverless ASGI deployment on Vercel.
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.database import Base, engine
@@ -42,6 +44,19 @@ app.add_middleware(
 
 # Include v1 API routes under /api/v1
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    first_msg = errors[0].get("msg", "Validation error") if errors else "Validation error"
+    if "Value error, " in first_msg:
+        first_msg = first_msg.replace("Value error, ", "")
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": first_msg},
+    )
+
 
 
 @app.get("/health", tags=["Health"])

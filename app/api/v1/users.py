@@ -40,6 +40,10 @@ def update_user_profile(
     donor = get_or_create_donor(db, current_user)
     if payload.blood_group is not None:
         donor.blood_group = payload.blood_group
+    if payload.age is not None:
+        donor.age = payload.age
+        today = date.today()
+        donor.date_of_birth = date(today.year - payload.age, today.month, min(today.day, 28))
 
     loc_val = payload.address or payload.location_zone
     if loc_val and loc_val.strip():
