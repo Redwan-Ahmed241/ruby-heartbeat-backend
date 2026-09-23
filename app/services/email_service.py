@@ -304,10 +304,20 @@ def send_emergency_broadcast_alert(
     hospital_name: str,
     units_needed: float,
     request_id: str,
+    exclude_email: Optional[str] = None,
 ) -> int:
     """Broadcast high-priority emergency alerts to all candidate donors in radius."""
     if not donor_emails:
         return 0
+
+    exclude_set = {exclude_email.strip().lower()} if exclude_email else set()
+    clean_emails = [
+        email for email in set(donor_emails)
+        if email and email.strip().lower() not in exclude_set
+    ]
+    if not clean_emails:
+        return 0
+    donor_emails = clean_emails
 
     subject = "URGENT: Emergency Blood Request Near You — LifeDrop"
 

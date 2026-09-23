@@ -132,11 +132,13 @@ def run_matching_engine(
     lon_delta = max_radius_km / (111.0 * max(abs(cos_lat), 1e-6))
 
     ninety_days_ago = today - timedelta(days=90)
+    creator_id = request.recipient_id
+
     donors_query = (
         db.query(Donor)
         .options(joinedload(Donor.medical_info), joinedload(Donor.user))
         .filter(
-            Donor.donor_id != request.recipient_id,
+            Donor.donor_id != creator_id,
             Donor.blood_group.in_(compatible_groups),
             Donor.availability_status == AvailabilityStatus.AVAILABLE,
             or_(Donor.last_donation_date == None, Donor.last_donation_date <= ninety_days_ago),
@@ -145,6 +147,13 @@ def run_matching_engine(
         )
         .all()
     )
+
+    # In-memory safeguard: strictly eliminate request creator from candidate pool
+    donors_query = [
+        d for d in donors_query
+        if str(d.donor_id) != str(creator_id)
+        and (not getattr(d, "user", None) or str(d.user.user_id) != str(creator_id))
+    ]
 
     # 3. Filter eligible donors and compute each donor's distance exactly once.
     eligible_with_distance: List[Tuple[Donor, float]] = []

@@ -91,6 +91,7 @@ class DonorResponse(BaseModel):
     longitude: float
     last_donation_date: Optional[date]
     availability_status: AvailabilityStatus
+    total_donations: Optional[int] = 0
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
     medical_info: Optional[MedicalInfoResponse] = None

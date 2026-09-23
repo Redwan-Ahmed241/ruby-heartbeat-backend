@@ -94,6 +94,7 @@ class DonorBriefResponse(BaseModel):
     longitude: float
     last_donation_date: Optional[date] = None
     availability_status: AvailabilityStatus
+    total_donations: Optional[int] = 0
 
     model_config = ConfigDict(from_attributes=True)
 

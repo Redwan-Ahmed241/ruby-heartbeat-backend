@@ -228,11 +228,12 @@ def create_blood_request(
 
         display_hospital = blood_req.hospital_name or blood_req.required_location
 
+        creator_email = (current_user.email or "").strip().lower()
         if request_data.urgency == RequestUrgency.EMERGENCY:
             emergency_emails = [
                 m.donor.user.email
                 for m in matches
-                if m.donor and m.donor.user and m.donor.user.email
+                if m.donor and m.donor.user and m.donor.user.email and m.donor.user.email.strip().lower() != creator_email
             ]
             if emergency_emails:
                 background_tasks.add_task(
@@ -242,10 +243,13 @@ def create_blood_request(
                     hospital_name=display_hospital,
                     units_needed=float(blood_req.quantity),
                     request_id=str(blood_req.request_id),
+                    exclude_email=creator_email,
                 )
         else:
             for m in matches:
                 if m.donor and m.donor.user and m.donor.user.email:
+                    if m.donor.user.email.strip().lower() == creator_email:
+                        continue
                     background_tasks.add_task(
                         send_single_donor_match_alert,
                         donor_email=m.donor.user.email,
@@ -331,10 +335,11 @@ def create_emergency_request(
         )
         display_hospital = blood_req.hospital_name or blood_req.required_location
 
+        creator_email = (current_user.email or "").strip().lower()
         emergency_emails = [
             m.donor.user.email
             for m in matches
-            if m.donor and m.donor.user and m.donor.user.email
+            if m.donor and m.donor.user and m.donor.user.email and m.donor.user.email.strip().lower() != creator_email
         ]
         if emergency_emails:
             background_tasks.add_task(
@@ -344,6 +349,7 @@ def create_emergency_request(
                 hospital_name=display_hospital,
                 units_needed=float(blood_req.quantity),
                 request_id=str(blood_req.request_id),
+                exclude_email=creator_email,
             )
 
     log_system_action(
@@ -600,8 +606,26 @@ def resolve_request_completion(
         )
         db.add(donation_record)
 
+        donor.total_donations = (donor.total_donations or 0) + 1
         donor.last_donation_date = today
         donor.availability_status = AvailabilityStatus.UNAVAILABLE
+        db.add(donor)
+
+        # Mark matching DonorMatch as COMPLETED
+        active_match = (
+            db.query(DonorMatch)
+            .filter(
+                DonorMatch.request_id == req.request_id,
+                DonorMatch.donor_id == req.accepted_donor_id,
+            )
+            .first()
+        )
+        if active_match:
+            active_match.response_status = MatchResponseStatus.COMPLETED
+            active_match.completed_at = datetime.utcnow()
+            active_match.donor_confirmed_completion = True
+            active_match.recipient_confirmed_completion = True
+            db.add(active_match)
 
         if background_tasks and donor.user and donor.user.email:
             background_tasks.add_task(

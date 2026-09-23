@@ -66,6 +66,7 @@ def get_or_create_donor(db: Session, current_user: User) -> Donor:
     return donor
 
 
+@router.get("/me", response_model=DonorResponse)
 @router.get("/profile", response_model=DonorResponse)
 def get_donor_profile(
     current_user: User = Depends(get_current_active_user),

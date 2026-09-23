@@ -237,11 +237,13 @@ def confirm_match_completion(
         if match.blood_request:
             match.blood_request.status = RequestStatus.COMPLETED
 
-        donor = match.donor
+        donor = db.query(Donor).filter(Donor.donor_id == match.donor_id).first()
         if donor:
             donor.total_donations = (donor.total_donations or 0) + 1
             donor.last_donation_date = date.today()
             donor.availability_status = AvailabilityStatus.UNAVAILABLE
+            db.add(donor)
+            db.flush()
 
         cooldown_until = now_dt + timedelta(days=90)
 
