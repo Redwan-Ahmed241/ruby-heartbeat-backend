@@ -547,7 +547,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"blood_group\": \"O_POSITIVE\",\n  \"quantity\": 2,\n  \"urgency\": \"EMERGENCY\",\n  \"required_location\": \"Square Hospital, Panthapath, Dhaka\",\n  \"hospital_name\": \"Square Hospital\",\n  \"patient_name\": \"{{test_patient_name}}\",\n  \"attendant_phone_number\": \"+8801711223344\",\n  \"is_contact_public\": true,\n  \"medical_reason\": \"Emergency surgery with acute blood loss\",\n  \"volume_ml\": 900.0\n}",
+              "raw": "{\n  \"blood_group\": \"O_POSITIVE\",\n  \"quantity\": 2,\n  \"urgency\": \"EMERGENCY\",\n  \"required_location\": \"Square Hospital, Panthapath, Dhaka\",\n  \"hospital_name\": \"Square Hospital\",\n  \"patient_name\": \"{{test_patient_name}}\",\n  \"attendant_phone_number\": \"+8801711223344\",\n  \"is_contact_public\": true,\n  \"medical_reason\": \"Emergency surgery with acute blood loss\",\n  \"volume_ml\": 900.0,\n  \"component_type\": \"WHOLE_BLOOD\",\n  \"latitude\": 23.7745,\n  \"longitude\": 90.4258\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -599,7 +599,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"blood_group\": \"O_POSITIVE\",\n  \"quantity\": 1,\n  \"urgency\": \"URGENT\",\n  \"required_location\": \"Dhaka Medical College Hospital\",\n  \"hospital_name\": \"DMCH\",\n  \"patient_name\": \"{{test_patient_name}}\",\n  \"is_contact_public\": true\n}",
+              "raw": "{\n  \"blood_group\": \"O_POSITIVE\",\n  \"quantity\": 1,\n  \"urgency\": \"URGENT\",\n  \"required_location\": \"Dhaka Medical College Hospital\",\n  \"hospital_name\": \"DMCH\",\n  \"patient_name\": \"{{test_patient_name}}\",\n  \"is_contact_public\": true,\n  \"component_type\": \"WHOLE_BLOOD\",\n  \"latitude\": 23.726,\n  \"longitude\": 90.3976\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -655,7 +655,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"blood_group\": \"O_POSITIVE\",\n  \"quantity\": 1,\n  \"urgency\": \"NORMAL\",\n  \"required_location\": \"Ibn Sina Hospital\",\n  \"hospital_name\": \"Ibn Sina\",\n  \"patient_name\": \"{{test_patient_name}}\"\n}",
+              "raw": "{\n  \"blood_group\": \"O_POSITIVE\",\n  \"quantity\": 1,\n  \"urgency\": \"NORMAL\",\n  \"required_location\": \"Ibn Sina Hospital\",\n  \"hospital_name\": \"Ibn Sina\",\n  \"patient_name\": \"{{test_patient_name}}\",\n  \"component_type\": \"WHOLE_BLOOD\",\n  \"latitude\": 23.753,\n  \"longitude\": 90.377\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -818,12 +818,18 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Request creator does NOT appear in candidate matches', function () {",
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test(\"Matches array does not include current requester as donor\", function () {",
                   "    const jsonData = pm.response.json();",
-                  "    const currentUserId = pm.collectionVariables.get('donor_user_id');",
-                  "    jsonData.forEach(m => {",
-                  "        pm.expect(m.donor_id).to.not.eql(currentUserId);",
-                  "    });",
+                  "    pm.expect(jsonData).to.be.an(\"array\");",
+                  "    const currentUserId = pm.collectionVariables.get(\"donor_user_id\");",
+                  "    if (Array.isArray(jsonData)) {",
+                  "        jsonData.forEach(match => {",
+                  "            pm.expect(match.donor_id).to.not.eql(currentUserId);",
+                  "        });",
+                  "    }",
                   "});"
                 ]
               }
@@ -1111,14 +1117,21 @@
                   "    const groups = jsonData.map(item => item.blood_group);",
                   "    pm.expect(groups).to.include('O_POSITIVE');",
                   "    pm.expect(groups).to.include('O_NEGATIVE');",
-                  "});"
+                  "});",
+                  "if (jsonData.length > 0) { pm.collectionVariables.set('inventory_id', jsonData[0].inventory_id); }"
                 ]
               }
             }
           ],
           "request": {
             "method": "GET",
-            "header": [],
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{donor_token}}",
+                "type": "text"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/api/v1/inventory/",
               "host": [
@@ -1147,7 +1160,7 @@
                   "pm.test('Transaction recorded with batch balance calculation', function () {",
                   "    const data = pm.response.json();",
                   "    pm.expect(data.transaction_id).to.be.a('string');",
-                  "    pm.expect(data.units).to.eql(2.0);",
+                  "    pm.expect(data.quantity).to.eql(2.0);",
                   "});"
                 ]
               }
@@ -1181,7 +1194,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"blood_group\": \"A_POSITIVE\",\n  \"component_type\": \"WHOLE_BLOOD\",\n  \"transaction_type\": \"IN\",\n  \"units\": 2.0,\n  \"notes\": \"Verified partner voluntary donation consignment\"\n}",
+              "raw": "{\n  \"inventory_id\": \"{{inventory_id}}\",\n  \"type\": \"IN\",\n  \"quantity\": 2.0,\n  \"reference_type\": \"DONATION\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1298,7 +1311,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"{{test_event_title}}\",\n  \"description\": \"Mass voluntary blood donation campaign for emergency tertiary trauma care.\",\n  \"location\": \"BRAC University New Campus Auditorium, Merul Badda, Dhaka\",\n  \"latitude\": 23.7745,\n  \"longitude\": 90.4258,\n  \"start_time\": \"2026-10-15T09:00:00Z\",\n  \"end_time\": \"2026-10-15T18:00:00Z\",\n  \"target_units\": 150\n}",
+              "raw": "{\n  \"title\": \"{{test_event_title}}\",\n  \"description\": \"Mass voluntary blood donation campaign for emergency tertiary trauma care.\",\n  \"location\": \"BRAC University New Campus Auditorium, Merul Badda, Dhaka\",\n  \"start_date\": \"2026-10-15\",\n  \"end_date\": \"2026-10-16\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1498,7 +1511,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"Severe O-Negative Platelet Deficit Across Dhaka Hospitals\",\n  \"message\": \"Critical trauma emergency at National Institute of Traumatology (NITOR). Immediate O-Negative donors needed.\",\n  \"notice_type\": \"URGENT_APPEAL\",\n  \"target_blood_group\": \"O_NEGATIVE\",\n  \"target_location\": \"Dhaka Central\",\n  \"priority\": 1,\n  \"expires_at\": \"2026-11-01T23:59:59Z\"\n}",
+              "raw": "{\n  \"title\": \"Severe O-Negative Platelet Deficit Across Dhaka Hospitals\",\n  \"description\": \"Critical trauma emergency at National Institute of Traumatology (NITOR). Immediate O-Negative donors needed.\",\n  \"source\": \"Directorate General of Health Services (DGHS)\",\n  \"publish_date\": \"2026-09-24\",\n  \"expiry_date\": \"2026-11-01\",\n  \"link\": \"https://dghs.gov.bd\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
