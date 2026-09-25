@@ -51,6 +51,7 @@ def register(request_data: UserRegisterRequest, request: Request, db: Session = 
         role=target_role,
         status=UserStatus.ACTIVE,
         nid_or_birth_cert=request_data.nid_or_birth_cert,
+        date_of_birth=request_data.date_of_birth,
     )
     db.add(new_user)
     db.flush()
@@ -87,10 +88,7 @@ def register(request_data: UserRegisterRequest, request: Request, db: Session = 
             dp.blood_group if dp and dp.blood_group
             else request_data.blood_group or BloodGroup.O_POSITIVE
         )
-        donor_dob = (
-            dp.date_of_birth if dp and dp.date_of_birth
-            else request_data.date_of_birth or date(2000, 1, 1)
-        )
+        donor_dob = request_data.date_of_birth or (dp.date_of_birth if dp and dp.date_of_birth else date(2000, 1, 1))
         donor_gender = (
             dp.gender if dp and dp.gender
             else request_data.gender or "Other"

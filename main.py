@@ -49,12 +49,22 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     errors = exc.errors()
-    first_msg = errors[0].get("msg", "Validation error") if errors else "Validation error"
+    first_err = errors[0] if errors else {}
+    first_msg = first_err.get("msg", "Validation error")
     if "Value error, " in first_msg:
         first_msg = first_msg.replace("Value error, ", "")
+
+    # Custom Pydantic validator failure (e.g. Underage donor, clinical rules) -> 400 Bad Request
+    if first_err.get("type") == "value_error":
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"detail": first_msg},
+        )
+
+    # Missing mandatory schema fields or type errors -> 422 Unprocessable Entity
     return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        content={"detail": first_msg},
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": errors},
     )
 
 

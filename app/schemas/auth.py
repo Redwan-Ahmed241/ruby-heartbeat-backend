@@ -1,8 +1,10 @@
+from app.schemas.donor import MedicalInfoResponse
+from app.models.user import calculate_age
 """Pydantic schemas for authentication and user management."""
 from datetime import datetime, date
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator, computed_field, model_validator
 from app.core.enums import UserRole, UserStatus, BloodGroup, AvailabilityStatus
 
 
@@ -65,35 +67,47 @@ class UserRegisterRequest(BaseModel):
     phone: str = Field(..., min_length=6, max_length=20)
     password: str = Field(..., min_length=6)
     role: Optional[UserRole] = UserRole.DONOR
+    date_of_birth: date  # Mandatory
     age: Optional[int] = None
 
-    @field_validator("age")
+    @model_validator(mode="before")
     @classmethod
-    def validate_donor_age(cls, v, info):
+    def extract_dob_from_profile(cls, data):
+        if isinstance(data, dict):
+            if "date_of_birth" not in data or not data["date_of_birth"]:
+                dp = data.get("donor_profile")
+                if isinstance(dp, dict) and dp.get("date_of_birth"):
+                    data["date_of_birth"] = dp["date_of_birth"]
+        return data
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_dob_and_age(cls, v: date, info) -> date:
+        if v > date.today():
+            raise ValueError("Date of birth cannot be in the future.")
+
+        age = calculate_age(v)
         role = info.data.get("role")
         role_str = getattr(role, "value", str(role)) if role is not None else None
+
         if role_str == "DONOR" or role == UserRole.DONOR:
-            if v is None:
-                dob = info.data.get("date_of_birth")
-                dp = info.data.get("donor_profile")
-                dp_dob = getattr(dp, "date_of_birth", None) if dp else None
-                birth = dob or dp_dob
-                if birth:
-                    if isinstance(birth, str):
-                        birth = date.fromisoformat(birth)
-                    today = date.today()
-                    v = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
-                else:
-                    raise ValueError("Age is required for blood donor registration.")
-            if v < 18:
-                raise ValueError("You must be at least 18 years old to register as a blood donor.")
-            if v > 65:
-                raise ValueError("Maximum eligible age for regular blood donation is 65 years.")
+            if age < 18:
+                raise ValueError(f"Donor must be at least 18 years old (calculated age: {age} years).")
+            if age > 65:
+                raise ValueError(f"Maximum eligible age for regular blood donation is 65 years (calculated age: {age} years).")
+        elif age < 1:
+            raise ValueError("Please provide a valid date of birth.")
+
         return v
 
-    # Unified account profile fields (for single registration flow)
+    @model_validator(mode="after")
+    def populate_calculated_age(self):
+        if self.date_of_birth:
+            self.age = calculate_age(self.date_of_birth)
+        return self
+
+    # Unified account profile fields
     blood_group: Optional[BloodGroup] = None
-    date_of_birth: Optional[date] = None
     gender: Optional[str] = Field(default=None, max_length=10)
     weight: Optional[float] = Field(default=None, ge=20.0, le=300.0)
     address: Optional[str] = Field(default=None, max_length=255)
@@ -108,12 +122,13 @@ class UserRegisterRequest(BaseModel):
     hospital_profile: Optional[HospitalProfileCreate] = None
 
 
+UserCreate = UserRegisterRequest
+
 
 class DonorBriefResponse(BaseModel):
     donor_id: UUID
     blood_group: BloodGroup
     date_of_birth: date
-    age: Optional[int] = None
     gender: str
     weight: float
     address: str
@@ -122,6 +137,11 @@ class DonorBriefResponse(BaseModel):
     last_donation_date: Optional[date] = None
     availability_status: AvailabilityStatus
     total_donations: Optional[int] = 0
+    medical_info: Optional[MedicalInfoResponse] = None
+
+    @computed_field
+    def age(self) -> int:
+        return calculate_age(self.date_of_birth)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -154,10 +174,17 @@ class UserBase(BaseModel):
     phone: str
     role: UserRole
     status: UserStatus
+    date_of_birth: Optional[date] = None
     created_at: datetime
     updated_at: datetime
     nid_or_birth_cert: Optional[str] = None
     backup_phone: Optional[str] = None
+
+    @computed_field
+    def age(self) -> Optional[int]:
+        if self.date_of_birth:
+            return calculate_age(self.date_of_birth)
+        return None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -172,8 +199,14 @@ class UserProfileUpdate(BaseModel):
     full_name: Optional[str] = Field(None, min_length=2, max_length=100)
     phone: Optional[str] = Field(None, min_length=6, max_length=20)
     backup_phone: Optional[str] = Field(None, max_length=20)
-    age: Optional[int] = Field(None, ge=18, le=65)
-    address: Optional[str] = Field(None, max_length=255)
     location_zone: Optional[str] = None
+    address: Optional[str] = Field(None, max_length=255)
     blood_group: Optional[BloodGroup] = None
+    date_of_birth: Optional[date] = None
     last_donation_date: Optional[date] = None
+    weight: Optional[float] = Field(None, ge=20.0, le=300.0)
+    hemoglobin: Optional[float] = Field(None, ge=5.0, le=25.0)
+    hemoglobin_level: Optional[float] = Field(None, ge=5.0, le=25.0)
+    age: Optional[int] = Field(None, ge=18, le=65)
+
+ProfileUpdateSchema = UserProfileUpdate

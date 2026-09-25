@@ -1,8 +1,9 @@
+from app.models.user import calculate_age
 """Pydantic schemas for donor profile, medical info, and donation history."""
 from datetime import datetime, date
 from typing import Optional, List
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, computed_field
 from app.core.enums import BloodGroup, ComponentType, AvailabilityStatus
 
 
@@ -85,18 +86,21 @@ class DonorResponse(BaseModel):
     donor_id: UUID
     blood_group: BloodGroup
     date_of_birth: date
-    age: Optional[int] = None
     gender: str
     weight: float
     address: str
     latitude: float
     longitude: float
-    last_donation_date: Optional[date]
+    last_donation_date: Optional[date] = None
     availability_status: AvailabilityStatus
     total_donations: Optional[int] = 0
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     medical_info: Optional[MedicalInfoResponse] = None
+
+    @computed_field
+    def age(self) -> int:
+        return calculate_age(self.date_of_birth)
 
     model_config = ConfigDict(from_attributes=True)
 

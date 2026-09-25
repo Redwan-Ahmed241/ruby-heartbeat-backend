@@ -25,6 +25,12 @@ from app.core.enums import (
 )
 
 
+def calculate_age(dob: date) -> int:
+    """Calculate age in full years from date of birth."""
+    today = date.today()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -37,6 +43,7 @@ class User(Base):
     role = Column(SQLEnum(UserRole, name="user_role_enum"), nullable=False)
     status = Column(SQLEnum(UserStatus, name="user_status_enum"), default=UserStatus.ACTIVE, nullable=False)
     nid_or_birth_cert = Column(String(50), nullable=True, default=None)
+    date_of_birth = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime,

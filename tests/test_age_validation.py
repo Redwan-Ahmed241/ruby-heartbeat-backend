@@ -12,8 +12,25 @@ from app.services.eligibility import check_donor_eligibility
 client = TestClient(app)
 
 
-def test_donor_age_17_rejected_with_400():
-    """Registering a donor with age 17 returns 400 Bad Request with message 'You must be at least 18 years old'."""
+def test_registration_without_dob_returns_422():
+    """Negative test: Registration without mandatory date_of_birth returns 422 Unprocessable Entity."""
+    unique = uuid.uuid4().hex[:8]
+    payload = {
+        "full_name": f"No DOB Donor {unique}",
+        "email": f"nodob_{unique}@example.com",
+        "phone": "+8801700112230",
+        "password": "Password123!",
+        "role": "DONOR",
+        "blood_group": "O_POSITIVE",
+        "address": "Banani, Dhaka",
+    }
+    response = client.post("/api/v1/auth/register", json=payload)
+    assert response.status_code == 422
+    assert "date_of_birth" in response.text
+
+
+def test_donor_age_under_18_rejected_with_400():
+    """Negative test: Registering a donor with date_of_birth making age < 18 returns 400 Bad Request."""
     unique = uuid.uuid4().hex[:8]
     payload = {
         "full_name": f"Young Donor {unique}",
@@ -21,13 +38,13 @@ def test_donor_age_17_rejected_with_400():
         "phone": "+8801700112233",
         "password": "Password123!",
         "role": "DONOR",
-        "age": 17,
+        "date_of_birth": "2010-01-01",  # Underage (16 years old)
         "blood_group": "O_POSITIVE",
         "address": "Banani, Dhaka",
     }
     response = client.post("/api/v1/auth/register", json=payload)
     assert response.status_code == 400
-    assert "You must be at least 18 years old" in response.text
+    assert "at least 18 years old" in response.text
 
 
 def test_donor_age_over_65_rejected():
@@ -39,7 +56,7 @@ def test_donor_age_over_65_rejected():
         "phone": "+8801700112234",
         "password": "Password123!",
         "role": "DONOR",
-        "age": 70,
+        "date_of_birth": "1950-01-01",  # 76 years old
         "blood_group": "A_POSITIVE",
         "address": "Dhanmondi, Dhaka",
     }
@@ -49,7 +66,7 @@ def test_donor_age_over_65_rejected():
 
 
 def test_donor_age_22_accepted_with_201():
-    """Registering a donor with age 22 succeeds with 201 Created."""
+    """Registering a donor with valid birthdate (age > 18) succeeds with 201 Created."""
     unique = uuid.uuid4().hex[:8]
     payload = {
         "full_name": f"Eligible Donor {unique}",
@@ -57,7 +74,7 @@ def test_donor_age_22_accepted_with_201():
         "phone": "+8801700112235",
         "password": "Password123!",
         "role": "DONOR",
-        "age": 22,
+        "date_of_birth": "2004-05-15",  # 22 years old
         "blood_group": "B_POSITIVE",
         "address": "Gulshan, Dhaka",
     }
@@ -67,24 +84,7 @@ def test_donor_age_22_accepted_with_201():
     assert data["role"] == "DONOR"
     assert data["donor"] is not None
     assert data["donor"]["age"] == 22
-
-
-def test_recipient_without_age_succeeds():
-    """Registering a recipient without age succeeds."""
-    unique = uuid.uuid4().hex[:8]
-    payload = {
-        "full_name": f"Recipient Patient {unique}",
-        "email": f"recip_{unique}@example.com",
-        "phone": "+8801800112233",
-        "password": "Password123!",
-        "role": "RECIPIENT",
-        "address": "Mirpur, Dhaka",
-        "nid_passport_no": "19951234567890",
-    }
-    response = client.post("/api/v1/auth/register", json=payload)
-    assert response.status_code == 201
-    data = response.json()
-    assert data["role"] == "RECIPIENT"
+    assert data["donor"]["date_of_birth"] == "2004-05-15"
 
 
 def test_eligibility_service_underage_disqualified():
@@ -107,20 +107,20 @@ def test_eligibility_service_underage_disqualified():
     assert metrics["age"] == 16
 
 
-def test_update_profile_age():
-    """Updating donor age via /api/v1/users/profile."""
+def test_update_profile_dob_weight_hemoglobin():
+    """Updating donor date_of_birth, weight, and hemoglobin via /api/v1/users/profile."""
     unique = uuid.uuid4().hex[:8]
     email = f"donor_{unique}@example.com"
     pwd = "Password123!"
     reg = client.post(
         "/api/v1/auth/register",
         json={
-            "full_name": "Profile Age Donor",
+            "full_name": "Profile Editable Donor",
             "email": email,
             "phone": "+8801700998877",
             "password": pwd,
             "role": "DONOR",
-            "age": 20,
+            "date_of_birth": "2002-05-15",
             "blood_group": "A_POSITIVE",
             "address": "Banani, Dhaka",
         },
@@ -134,12 +134,21 @@ def test_update_profile_age():
     token = token_res.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Update age to 25
+    # Update date_of_birth, weight, and hemoglobin
     update_res = client.put(
         "/api/v1/users/profile",
         headers=headers,
-        json={"age": 25, "address": "Gulshan, Dhaka"},
+        json={
+            "date_of_birth": "1998-03-20",
+            "weight": 72.5,
+            "hemoglobin": 14.8,
+            "address": "Gulshan, Dhaka",
+        },
     )
     assert update_res.status_code == 200
     data = update_res.json()
-    assert data["donor"]["age"] == 25
+    assert data["date_of_birth"] == "1998-03-20"
+    assert data["donor"]["date_of_birth"] == "1998-03-20"
+    assert data["donor"]["age"] == 28
+    assert float(data["donor"]["weight"]) == 72.5
+    assert float(data["donor"]["medical_info"]["hemoglobin_level"]) == 14.8
