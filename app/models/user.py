@@ -25,8 +25,10 @@ from app.core.enums import (
 )
 
 
-def calculate_age(dob: date) -> int:
-    """Calculate age in full years from date of birth."""
+def calculate_age(dob: date | None) -> int | None:
+    """Calculate age in full years from date of birth safely."""
+    if not dob:
+        return None
     today = date.today()
     return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 

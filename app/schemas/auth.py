@@ -128,7 +128,7 @@ UserCreate = UserRegisterRequest
 class DonorBriefResponse(BaseModel):
     donor_id: UUID
     blood_group: BloodGroup
-    date_of_birth: date
+    date_of_birth: Optional[date] = None
     gender: str
     weight: float
     address: str
@@ -140,8 +140,10 @@ class DonorBriefResponse(BaseModel):
     medical_info: Optional[MedicalInfoResponse] = None
 
     @computed_field
-    def age(self) -> int:
-        return calculate_age(self.date_of_birth)
+    def age(self) -> Optional[int]:
+        if self.date_of_birth:
+            return calculate_age(self.date_of_birth)
+        return None
 
     model_config = ConfigDict(from_attributes=True)
 
