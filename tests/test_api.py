@@ -120,7 +120,8 @@ def test_full_user_and_matching_flow():
             "email": recipient_email,
             "phone": "+8801822222222",
             "password": "Password123!",
-            "role": "RECIPIENT",
+                        "date_of_birth": "2002-05-15",
+"role": "RECIPIENT",
             "recipient_profile": {
                 "nid_passport_no": "199283746152",
                 "address": "Gulshan 1, Dhaka",
@@ -226,7 +227,8 @@ def test_hospital_inventory_and_expiry_flow():
             "email": hosp_email,
             "phone": "+8801933333333",
             "password": "Password123!",
-            "role": "HOSPITAL_ADMIN",
+                        "date_of_birth": "2002-05-15",
+"role": "HOSPITAL_ADMIN",
             "hospital_profile": {
                 "hospital_name": "Evercare Hospital",
                 "address": "Plot 81, Block E, Bashundhara R/A",
@@ -310,7 +312,8 @@ def test_events_notices_and_audit():
             "email": admin_email,
             "phone": "+8801999999999",
             "password": "Password123!",
-            "role": "SYSTEM_ADMIN",
+                        "date_of_birth": "2002-05-15",
+"role": "SYSTEM_ADMIN",
         },
     )
     assert admin_reg.status_code == 201
@@ -437,7 +440,8 @@ def test_emergency_request_triggers_email_broadcast():
             "email": recip_email,
             "phone": "+8801844444444",
             "password": "Password123!",
-            "role": "RECIPIENT",
+                        "date_of_birth": "2002-05-15",
+"role": "RECIPIENT",
             "recipient_profile": {
                 "nid_passport_no": "199483726194",
                 "address": "Dhanmondi 27, Dhaka",
@@ -590,7 +594,8 @@ def test_blood_request_phase3_fields_and_privacy_masking():
             "email": email_a,
             "phone": "+8801711001122",
             "password": "Password123!",
-            "blood_group": "A_POSITIVE",
+                        "date_of_birth": "2002-05-15",
+"blood_group": "A_POSITIVE",
             "address": "Dhanmondi, Dhaka",
         },
     )
@@ -610,7 +615,8 @@ def test_blood_request_phase3_fields_and_privacy_masking():
             "email": email_b,
             "phone": "+8801822003344",
             "password": "Password123!",
-            "blood_group": "A_POSITIVE",
+                        "date_of_birth": "2002-05-15",
+"blood_group": "A_POSITIVE",
             "address": "Panthapath, Dhaka",
         },
     )
@@ -713,7 +719,8 @@ def test_phase4_emergency_landing_accept_and_unmasking(monkeypatch):
             "email": email_r,
             "phone": "+8801811223344",
             "password": "Password123!",
-            "role": "RECIPIENT",
+                        "date_of_birth": "2002-05-15",
+"role": "RECIPIENT",
             "blood_group": "A_POSITIVE",
             "address": "Dhanmondi, Dhaka",
         },
@@ -767,7 +774,8 @@ def test_phase4_emergency_landing_accept_and_unmasking(monkeypatch):
             "email": email_d,
             "phone": "+8801777665544",
             "password": "Password123!",
-            "role": "DONOR",
+                        "date_of_birth": "2002-05-15",
+"role": "DONOR",
             "blood_group": "A_POSITIVE",
             "address": "Banani, Dhaka",
         },
@@ -825,7 +833,8 @@ def test_phase4_emergency_landing_accept_and_unmasking(monkeypatch):
             "email": email_c,
             "phone": "+8801666554433",
             "password": "Password123!",
-            "role": "DONOR",
+                        "date_of_birth": "2002-05-15",
+"role": "DONOR",
             "blood_group": "A_POSITIVE",
             "address": "Uttara, Dhaka",
         },
@@ -872,7 +881,8 @@ def test_phase5_approximate_coordinate_serialization_and_map_safeguard(monkeypat
             "email": email_d,
             "phone": "+8801711224466",
             "password": "Password123!",
-            "role": "DONOR",
+                        "date_of_birth": "2002-05-15",
+"role": "DONOR",
             "blood_group": "AB_POSITIVE",
             "address": "Road 11, Block D, Banani, Dhaka",
         },
@@ -914,7 +924,8 @@ def test_phase5_approximate_coordinate_serialization_and_map_safeguard(monkeypat
             "email": email_r,
             "phone": "+8801811335577",
             "password": "Password123!",
-            "role": "RECIPIENT",
+                        "date_of_birth": "2002-05-15",
+"role": "RECIPIENT",
             "blood_group": "AB_POSITIVE",
             "address": "Home Address in Old Dhaka (Private)",
         },
@@ -984,7 +995,8 @@ def test_phase6_post_donation_completion_history_and_cooldown():
             "email": email_r,
             "phone": "+8801755667788",
             "password": "Password123!",
-            "role": "RECIPIENT",
+                        "date_of_birth": "2002-05-15",
+"role": "RECIPIENT",
             "blood_group": "O_POSITIVE",
             "address": "Dhanmondi, Dhaka",
         },
@@ -1005,7 +1017,8 @@ def test_phase6_post_donation_completion_history_and_cooldown():
             "email": email_d,
             "phone": "+8801877889900",
             "password": "Password123!",
-            "role": "DONOR",
+                        "date_of_birth": "2002-05-15",
+"role": "DONOR",
             "blood_group": "O_POSITIVE",
             "address": "Kalabagan, Dhaka",
         },
@@ -1068,7 +1081,8 @@ def test_phase6_post_donation_completion_history_and_cooldown():
             "email": email_other,
             "phone": "+8801900000000",
             "password": "Password123!",
-        },
+                "date_of_birth": "2002-05-15",
+},
     )
     token_other = client.post(
         "/api/v1/auth/login",
@@ -1406,7 +1420,8 @@ def test_phase9_urgent_feed_pinning_and_unified_dashboard_queries():
             "email": rec_email,
             "phone": "+8801799887711",
             "password": "Password123!",
-            "role": "RECIPIENT",
+                        "date_of_birth": "2002-05-15",
+"role": "RECIPIENT",
             "blood_group": "B_POSITIVE",
             "address": "Gulshan 1, Dhaka",
         },
@@ -1712,3 +1727,46 @@ def test_donation_completion_increments_count_and_returns_updated():
 
     d_auth_after = client.get("/api/v1/auth/me", headers=d_headers).json()
     assert d_auth_after["donor"].get("total_donations") == 1
+
+
+def test_registration_missing_dob_returns_422():
+    """Verify that user registration without date_of_birth returns 422 Unprocessable Entity."""
+    unique = str(uuid.uuid4())[:8]
+    res = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "No DOB User",
+            "email": f"nodob_{unique}@example.com",
+            "phone": "+8801711999888",
+            "password": "Password123!",
+            "role": "DONOR",
+            "blood_group": "O_POSITIVE",
+            "address": "Banani, Dhaka",
+        },
+    )
+    assert res.status_code == 422
+    data = res.json()
+    # Check that error mentions date_of_birth
+    error_str = str(data)
+    assert "date_of_birth" in error_str
+
+
+def test_registration_underage_donor_returns_400():
+    """Verify that registering an underage donor (age < 18) returns 400 Bad Request."""
+    unique = str(uuid.uuid4())[:8]
+    res = client.post(
+        "/api/v1/auth/register",
+        json={
+            "full_name": "Underage Donor",
+            "email": f"underage_{unique}@example.com",
+            "phone": "+8801711999777",
+            "password": "Password123!",
+            "role": "DONOR",
+            "date_of_birth": "2010-01-01",
+            "blood_group": "O_POSITIVE",
+            "address": "Banani, Dhaka",
+        },
+    )
+    assert res.status_code == 400
+    assert "at least 18 years old" in res.json().get("detail", "")
+

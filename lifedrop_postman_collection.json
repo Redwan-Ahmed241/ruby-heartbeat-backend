@@ -114,7 +114,7 @@
                   "    pm.expect(jsonData.email).to.eql(pm.collectionVariables.get('test_donor_email'));",
                   "    pm.expect(jsonData.role).to.eql('DONOR');",
                   "    pm.expect(jsonData.donor).to.be.an('object');",
-                  "    pm.expect(jsonData.donor.age).to.eql(24);",
+                  "    pm.expect(jsonData.donor.age).to.be.at.least(18);",
                   "    pm.collectionVariables.set('donor_user_id', jsonData.user_id);",
                   "});"
                 ]
@@ -144,7 +144,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"full_name\": \"Dr. Tanvir Hasan\",\n  \"email\": \"{{test_donor_email}}\",\n  \"phone\": \"{{test_donor_phone}}\",\n  \"password\": \"Password123!\",\n  \"role\": \"DONOR\",\n  \"age\": 24,\n  \"blood_group\": \"O_POSITIVE\",\n  \"address\": \"Banani, Dhaka\",\n  \"gender\": \"Male\",\n  \"weight\": 70.0,\n  \"latitude\": 23.7937,\n  \"longitude\": 90.4066,\n  \"nid_or_birth_cert\": \"1999269288102\"\n}",
+              "raw": "{\n  \"full_name\": \"Dr. Tanvir Hasan\",\n  \"email\": \"{{test_donor_email}}\",\n  \"phone\": \"{{test_donor_phone}}\",\n  \"password\": \"Password123!\",\n  \"role\": \"DONOR\",\n  \"age\": 24,\n  \"blood_group\": \"O_POSITIVE\",\n  \"address\": \"Banani, Dhaka\",\n  \"gender\": \"Male\",\n  \"weight\": 70.0,\n  \"latitude\": 23.7937,\n  \"longitude\": 90.4066,\n  \"nid_or_birth_cert\": \"1999269288102\",\n  \"date_of_birth\": \"2000-01-01\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -206,7 +206,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"full_name\": \"Young Volunteer\",\n  \"email\": \"{{underage_email}}\",\n  \"phone\": \"+8801700998877\",\n  \"password\": \"Password123!\",\n  \"role\": \"DONOR\",\n  \"age\": 16,\n  \"blood_group\": \"A_POSITIVE\",\n  \"address\": \"Dhanmondi, Dhaka\"\n}",
+              "raw": "{\n  \"full_name\": \"Young Volunteer\",\n  \"email\": \"{{underage_email}}\",\n  \"phone\": \"+8801700998877\",\n  \"password\": \"Password123!\",\n  \"role\": \"DONOR\",\n  \"age\": 16,\n  \"blood_group\": \"A_POSITIVE\",\n  \"address\": \"Dhanmondi, Dhaka\",\n  \"date_of_birth\": \"2010-01-01\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
