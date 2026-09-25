@@ -43,9 +43,30 @@ def respond_to_match(
             detail="You are not authorized to respond to this match.",
         )
 
-    # Donor Concurrency Lock: A donor who accepts a donation request cannot accept another
-    # until current match is completed or cancelled.
+    # Clinical Eligibility + Donor Concurrency Lock
     if response_data.response == MatchResponseStatus.ACCEPTED:
+        # === Clinical Cooldown Guard (90-day whole blood) ===
+        donor = (
+            db.query(Donor)
+            .options(joinedload(Donor.medical_info))
+            .filter(Donor.donor_id == current_user.user_id)
+            .first()
+        )
+        if donor:
+            from app.services.eligibility import check_donor_eligibility
+            is_eligible, rejections, metrics = check_donor_eligibility(donor)
+            if not is_eligible:
+                cooldown_msg = "; ".join(rejections)
+                next_date = metrics.get("next_eligible_date")
+                detail = f"You are not currently eligible to donate: {cooldown_msg}"
+                if next_date:
+                    detail += f" Next eligible date: {next_date.strftime('%Y-%m-%d')}."
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=detail,
+                )
+
+        # === Donor Concurrency Lock ===
         active_match = (
             db.query(DonorMatch)
             .join(BloodRequest, DonorMatch.request_id == BloodRequest.request_id)
