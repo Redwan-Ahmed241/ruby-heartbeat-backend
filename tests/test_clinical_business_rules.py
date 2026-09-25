@@ -60,6 +60,7 @@ def _register_user(role: str, blood_group: str = "O_POSITIVE", full_name: str = 
         "phone": phone,
         "password": "Password123!",
         "role": role,
+        "date_of_birth": "1996-01-01",
     }
     if nid:
         payload["nid_or_birth_cert"] = nid
