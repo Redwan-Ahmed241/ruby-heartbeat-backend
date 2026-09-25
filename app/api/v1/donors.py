@@ -2,7 +2,7 @@
 from datetime import date
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import func
+from sqlalchemy import func, or_, and_
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.database import get_db
@@ -114,6 +114,21 @@ def toggle_availability(
     """Toggle donor availability between AVAILABLE and UNAVAILABLE."""
     donor = get_or_create_donor(db, current_user)
 
+    if status_data.availability_status == AvailabilityStatus.AVAILABLE:
+        latest_hist = (
+            db.query(func.max(DonationHistory.donation_date))
+            .filter(DonationHistory.donor_id == donor.donor_id)
+            .scalar()
+        )
+        effective_last_donation = latest_hist or donor.last_donation_date
+        if effective_last_donation:
+            days_since = (date.today() - effective_last_donation).days
+            if days_since < 90:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot set availability to AVAILABLE: 90-day clinical cooldown is active ({90 - days_since} days remaining until eligible).",
+                )
+
     donor.availability_status = status_data.availability_status
 
     log_system_action(
@@ -136,6 +151,19 @@ def get_eligibility(
 ):
     """Run automated eligibility check against donor's current records."""
     donor = get_or_create_donor(db, current_user)
+
+    # Synchronize donor.last_donation_date from newest DonationHistory if newer
+    latest_hist = (
+        db.query(func.max(DonationHistory.donation_date))
+        .filter(DonationHistory.donor_id == donor.donor_id)
+        .scalar()
+    )
+    if latest_hist and (not donor.last_donation_date or latest_hist > donor.last_donation_date):
+        donor.last_donation_date = latest_hist
+        if (date.today() - latest_hist).days < 90:
+            donor.availability_status = AvailabilityStatus.UNAVAILABLE
+        db.add(donor)
+        db.commit()
 
     is_eligible, rejections, metrics = check_donor_eligibility(donor)
     return EligibilityCheckResponse(
@@ -228,6 +256,10 @@ def get_donation_history(
         .filter(
             DonorMatch.donor_id == donor.donor_id,
             BloodRequest.status == RequestStatus.COMPLETED,
+            or_(
+                DonorMatch.response_status.in_([MatchResponseStatus.ACCEPTED, MatchResponseStatus.COMPLETED]),
+                BloodRequest.accepted_donor_id == donor.donor_id,
+            ),
         )
         .all()
     )
@@ -254,6 +286,15 @@ def get_donation_history(
             )
 
     results.sort(key=lambda r: r.donation_date, reverse=True)
+    if results:
+        latest_date = max(r.donation_date for r in results)
+        if not donor.last_donation_date or latest_date > donor.last_donation_date:
+            donor.last_donation_date = latest_date
+            if (date.today() - latest_date).days < 90:
+                donor.availability_status = AvailabilityStatus.UNAVAILABLE
+            db.add(donor)
+            db.commit()
+
     return results
 
 
